@@ -2,7 +2,7 @@ use crate::{
     agent::{
         agent_model::{
             AgentAction, AgentMemory, AgentState, DecisionType, MAX_LOOP_REPEATS, MAX_RETRIES,
-            MIN_CONFIDENCE, ModelDecision, Policy,
+            MIN_CONFIDENCE, ModelDecision,
         },
         budget::{BudgetDecision, check_budgets},
         ai_model::{ModelBackend, MockBackend, OllamaBackend},
@@ -142,10 +142,10 @@ pub fn emit_observed_actions(diff: &SemanticStateDiff, memory: &mut AgentMemory)
     }
 }
 
-fn call_model(
-    screen: &ScreenState,
-    diff: &SemanticStateDiff,
-    memory: &AgentMemory,
+fn _call_model(
+    _screen: &ScreenState,
+    _diff: &SemanticStateDiff,
+    _memory: &AgentMemory,
 ) -> ModelDecision {
     // Placeholder: rule-based or mock
     ModelDecision {

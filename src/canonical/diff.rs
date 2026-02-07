@@ -135,7 +135,7 @@ fn derive_signals(
     forms: &FormDiff,
     _actions: &ActionDiff,
     outputs: &OutputDiff,
-    before: &CanonicalScreenState,
+    _before: &CanonicalScreenState,
     after: &CanonicalScreenState,
     is_initial: bool,
 ) -> Vec<SemanticSignal> {

@@ -14,7 +14,7 @@ pub mod state;
 pub mod trace;
 
 pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    let tracer = TraceLogger::new("agent_trace.jsonl");
+    let _tracer = TraceLogger::new("agent_trace.jsonl");
     let url = "https://google.com";
 
     /* ---------- BASELINE STATE (EMPTY) ---------- */

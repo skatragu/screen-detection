@@ -16,7 +16,7 @@ pub fn classify(elements: &[DomElement]) -> ScreenSemantics {
             continue;
         }
 
-        if let Some(form_id) = &el.formId {
+        if let Some(form_id) = &el.form_id {
             let form = forms.entry(form_id.clone()).or_insert(Form {
                 id: form_id.clone(),
                 inputs: vec![],
@@ -147,7 +147,7 @@ fn is_output(el: &DomElement) -> bool {
 }
 
 fn label_for(el: &DomElement) -> Option<String> {
-    el.ariaLabel
+    el.aria_label
         .clone()
         .or_else(|| el.text.clone())
         .map(|s| s.trim().to_string())

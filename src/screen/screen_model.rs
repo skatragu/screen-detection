@@ -6,10 +6,12 @@ pub struct DomElement {
     pub text: Option<String>,
     pub role: Option<String>,
     pub r#type: Option<String>,
-    pub ariaLabel: Option<String>,
+    #[serde(rename = "ariaLabel")]
+    pub aria_label: Option<String>,
     pub disabled: bool,
     pub required: bool,
-    pub formId: Option<String>,
+    #[serde(rename = "formId")]
+    pub form_id: Option<String>,
 }
 
 #[derive(Debug)]

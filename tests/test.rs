@@ -226,7 +226,7 @@ fn agent_completes_search_flow() {
         };
 
         if let Some(action) = agent.step(&state, &diff, &tracer) {
-            execute_action(&action, &state);
+            let _ = execute_action(&action, &state);
         }
 
         prev_state = Some(canonical);
