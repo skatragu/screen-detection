@@ -1,3 +1,6 @@
+use std::thread;
+use std::time::Duration;
+
 use crate::{
     agent::{
         agent_model::{
@@ -7,6 +10,7 @@ use crate::{
         budget::{BudgetDecision, check_budgets},
         ai_model::{ModelBackend, MockBackend, OllamaBackend},
     },
+    browser::playwright::{BrowserCommand, SelectorHint, execute_browser_action},
     canonical::diff::{SemanticSignal, SemanticStateDiff},
     screen::screen_model::ElementKind,
     state::{identity::IdentifiedElement, state_model::ScreenState},
@@ -155,7 +159,23 @@ fn _call_model(
     }
 }
 
+/// Build a SelectorHint from an IdentifiedElement's semantic info.
+fn selector_from_target(target: &IdentifiedElement, form_id: Option<&str>) -> SelectorHint {
+    SelectorHint {
+        role: target.element.role.clone(),
+        name: target.element.label.clone(),
+        tag: target.element.tag.clone(),
+        input_type: target.element.input_type.clone(),
+        form_id: form_id.map(|s| s.to_string()),
+    }
+}
+
 pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), String> {
+    let url = state
+        .url
+        .as_deref()
+        .ok_or_else(|| "No URL in screen state".to_string())?;
+
     match action {
         AgentAction::FillInput {
             form_id,
@@ -174,8 +194,14 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
                 target.id, input_label, value
             );
 
-            // TODO: Playwright: fill(selector, value)
-            Ok(())
+            let command = BrowserCommand {
+                action: "fill".into(),
+                url: url.to_string(),
+                value: Some(value.clone()),
+                selector: Some(selector_from_target(target, Some(form_id))),
+                duration_ms: None,
+            };
+            execute_browser_action(&command)
         }
 
         AgentAction::SubmitForm {
@@ -197,8 +223,14 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
                 form_id, target.id, action_label
             );
 
-            // TODO: Playwright: click(selector)
-            Ok(())
+            let command = BrowserCommand {
+                action: "click".into(),
+                url: url.to_string(),
+                value: None,
+                selector: Some(selector_from_target(target, Some(form_id))),
+                duration_ms: None,
+            };
+            execute_browser_action(&command)
         }
 
         AgentAction::ClickAction { label, identity } => {
@@ -208,20 +240,26 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
 
             println!("Clicking standalone action [{}] '{}'", target.id, label);
 
-            // TODO: Playwright: click(selector)
-            Ok(())
+            let command = BrowserCommand {
+                action: "click".into(),
+                url: url.to_string(),
+                value: None,
+                selector: Some(selector_from_target(target, None)),
+                duration_ms: None,
+            };
+            execute_browser_action(&command)
         }
 
         AgentAction::Wait { reason } => {
             println!("Waiting: {}", reason);
-            // TODO: sleep / wait-for-network-idle
+            thread::sleep(Duration::from_secs(2));
             Ok(())
         }
 
         AgentAction::FormSubmitted { form_id } => {
             // IMPORTANT: This is an OBSERVED action, not executable
             println!(
-                "✅ Form '{}' submission confirmed (no execution required)",
+                "Form '{}' submission confirmed (no execution required)",
                 form_id
             );
             Ok(())

@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision},
     },
-    browser::playwright::extract_screen,
+    browser::playwright::{SelectorHint, extract_screen},
     canonical::{
         canonical_model::{CanonicalScreenState, canonicalize},
         diff::{SemanticSignal, SemanticStateDiff, semantic_diff},
@@ -430,4 +432,181 @@ fn agent_loop_with_mock_backend() {
         Some(SemanticSignal::ResultsAppeared),
         "Agent should end with ResultsAppeared signal"
     );
+}
+
+// =========================================================================
+// New tests: classifier field population, selector hints, serialization,
+// and error paths for execute_action
+// =========================================================================
+
+#[test]
+fn classifier_populates_screen_element_fields() {
+    let elements = vec![
+        DomElement {
+            tag: "input".into(),
+            text: None,
+            role: Some("textbox".into()),
+            r#type: Some("text".into()),
+            aria_label: Some("Search query".into()),
+            disabled: false,
+            required: false,
+            form_id: Some("search".into()),
+        },
+        DomElement {
+            tag: "button".into(),
+            text: Some("Submit".into()),
+            role: Some("button".into()),
+            r#type: Some("submit".into()),
+            aria_label: None,
+            disabled: false,
+            required: false,
+            form_id: Some("search".into()),
+        },
+        DomElement {
+            tag: "div".into(),
+            text: Some("Results will appear here".into()),
+            role: None,
+            r#type: None,
+            aria_label: None,
+            disabled: false,
+            required: false,
+            form_id: None,
+        },
+    ];
+
+    let semantics = classify(&elements);
+
+    // Check the input in the form
+    let form = semantics.forms.iter().find(|f| f.id == "search").unwrap();
+    let input = &form.inputs[0];
+    assert_eq!(input.tag, Some("input".into()));
+    assert_eq!(input.role, Some("textbox".into()));
+    assert_eq!(input.input_type, Some("text".into()));
+    assert_eq!(input.label, Some("Search query".into()));
+
+    // Check the action in the form
+    let action = &form.actions[0];
+    assert_eq!(action.tag, Some("button".into()));
+    assert_eq!(action.role, Some("button".into()));
+    assert_eq!(action.input_type, Some("submit".into()));
+
+    // Check the output
+    let output = &semantics.outputs[0];
+    assert_eq!(output.tag, Some("div".into()));
+    assert_eq!(output.role, None);
+    assert_eq!(output.input_type, None);
+}
+
+#[test]
+fn selector_hint_serializes_with_correct_field_names() {
+    let hint = SelectorHint {
+        role: Some("textbox".into()),
+        name: Some("Email".into()),
+        tag: Some("input".into()),
+        input_type: Some("email".into()),
+        form_id: Some("login".into()),
+    };
+
+    let json: serde_json::Value = serde_json::to_value(&hint).unwrap();
+
+    // Verify serde renames: input_type -> "type", form_id -> "formId"
+    assert_eq!(json["role"], "textbox");
+    assert_eq!(json["name"], "Email");
+    assert_eq!(json["tag"], "input");
+    assert_eq!(json["type"], "email", "input_type must serialize as 'type'");
+    assert_eq!(json["formId"], "login", "form_id must serialize as 'formId'");
+
+    // Verify the Rust field names are NOT in the JSON
+    assert!(json.get("input_type").is_none(), "Must not contain 'input_type' key");
+    assert!(json.get("form_id").is_none(), "Must not contain 'form_id' key");
+}
+
+#[test]
+fn selector_hint_skips_none_fields() {
+    let hint = SelectorHint {
+        role: None,
+        name: Some("Click me".into()),
+        tag: Some("a".into()),
+        input_type: None,
+        form_id: None,
+    };
+
+    let json_str = serde_json::to_string(&hint).unwrap();
+
+    assert!(!json_str.contains("role"), "None fields must be skipped");
+    assert!(!json_str.contains("type"), "None fields must be skipped");
+    assert!(!json_str.contains("formId"), "None fields must be skipped");
+    assert!(json_str.contains("name"), "Present fields must appear");
+    assert!(json_str.contains("tag"), "Present fields must appear");
+}
+
+#[test]
+fn execute_action_errors_on_missing_url() {
+    let state = ScreenState {
+        url: None,
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
+
+    let action = AgentAction::FillInput {
+        form_id: "search".into(),
+        input_label: "Query".into(),
+        value: "test".into(),
+        identity: None,
+    };
+
+    let result = execute_action(&action, &state);
+    assert!(result.is_err(), "Must fail when URL is missing");
+    assert!(
+        result.unwrap_err().contains("No URL"),
+        "Error message should mention missing URL"
+    );
+}
+
+#[test]
+fn execute_action_errors_on_missing_element() {
+    let state = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
+
+    // FillInput with unknown identity and no matching label
+    let fill = execute_action(
+        &AgentAction::FillInput {
+            form_id: "search".into(),
+            input_label: "nonexistent".into(),
+            value: "test".into(),
+            identity: Some("bogus_id".into()),
+        },
+        &state,
+    );
+    assert!(fill.is_err(), "FillInput must fail for missing element");
+
+    // SubmitForm with unknown identity
+    let submit = execute_action(
+        &AgentAction::SubmitForm {
+            form_id: "search".into(),
+            action_label: "nonexistent".into(),
+            identity: Some("bogus_id".into()),
+        },
+        &state,
+    );
+    assert!(submit.is_err(), "SubmitForm must fail for missing element");
+
+    // ClickAction with unknown identity
+    let click = execute_action(
+        &AgentAction::ClickAction {
+            label: "nonexistent".into(),
+            identity: Some("bogus_id".into()),
+        },
+        &state,
+    );
+    assert!(click.is_err(), "ClickAction must fail for missing element");
 }

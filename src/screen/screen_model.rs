@@ -26,6 +26,9 @@ pub struct ScreenSemantics {
 pub struct ScreenElement {
     pub label: Option<String>,
     pub kind: ElementKind,
+    pub tag: Option<String>,
+    pub role: Option<String>,
+    pub input_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]

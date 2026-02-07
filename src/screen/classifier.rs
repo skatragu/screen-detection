@@ -157,6 +157,9 @@ fn to_input(el: &DomElement) -> ScreenElement {
     ScreenElement {
         label: label_for(el),
         kind: ElementKind::Input,
+        tag: Some(el.tag.clone()),
+        role: el.role.clone(),
+        input_type: el.r#type.clone(),
     }
 }
 
@@ -164,6 +167,9 @@ fn to_action(el: &DomElement) -> ScreenElement {
     ScreenElement {
         label: label_for(el),
         kind: ElementKind::Action,
+        tag: Some(el.tag.clone()),
+        role: el.role.clone(),
+        input_type: el.r#type.clone(),
     }
 }
 
@@ -171,5 +177,8 @@ fn to_output(el: &DomElement) -> ScreenElement {
     ScreenElement {
         label: label_for(el),
         kind: ElementKind::Output,
+        tag: Some(el.tag.clone()),
+        role: el.role.clone(),
+        input_type: el.r#type.clone(),
     }
 }
