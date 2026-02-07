@@ -323,56 +323,8 @@ impl ModelBackend for MockBackend {
         &self,
         screen: &ScreenState,
         diff: &SemanticStateDiff,
-        _memory: &AgentMemory,
+        memory: &AgentMemory,
     ) -> Option<ModelDecision> {
-        let signal = diff.signals.last()?;
-
-        let (decision_type, action) = match signal {
-            SemanticSignal::ScreenLoaded => {
-                // Find first form and first input, fill it
-                let form = screen.forms.first()?;
-                let input = form.inputs.first()?;
-                (
-                    DecisionType::Act,
-                    Some(AgentAction::FillInput {
-                        form_id: form.id.clone(),
-                        input_label: input.label.clone().unwrap_or_default(),
-                        value: "test_value".to_string(),
-                        identity: None,
-                    }),
-                )
-            }
-            SemanticSignal::FormSubmitted { form_id } => (
-                DecisionType::Wait,
-                Some(AgentAction::Wait {
-                    reason: format!("Form '{}' submitted, waiting for results", form_id),
-                }),
-            ),
-            SemanticSignal::ResultsAppeared => (
-                DecisionType::Wait,
-                Some(AgentAction::Wait {
-                    reason: "Results appeared, task complete".to_string(),
-                }),
-            ),
-            SemanticSignal::ErrorAppeared => (
-                DecisionType::Wait,
-                Some(AgentAction::Wait {
-                    reason: "Error detected, needs investigation".to_string(),
-                }),
-            ),
-            SemanticSignal::NavigationOccurred => (
-                DecisionType::Wait,
-                Some(AgentAction::Wait {
-                    reason: "Navigation occurred".to_string(),
-                }),
-            ),
-            SemanticSignal::NoOp => return None,
-        };
-
-        Some(ModelDecision {
-            decision: decision_type,
-            next_action: action,
-            confidence: 0.85,
-        })
+        DeterministicPolicy.decide(screen, diff, memory)
     }
 }

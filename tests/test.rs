@@ -3,14 +3,15 @@ use std::collections::HashMap;
 use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
-        agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision},
+        agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision, Policy},
+        ai_model::DeterministicPolicy,
     },
     browser::playwright::{SelectorHint, extract_screen},
     canonical::{
         canonical_model::{CanonicalScreenState, canonicalize},
-        diff::{SemanticSignal, SemanticStateDiff, semantic_diff},
+        diff::{ActionDiff, FormDiff, OutputDiff, SemanticSignal, SemanticStateDiff, semantic_diff},
     },
-    screen::{classifier::classify, screen_model::DomElement},
+    screen::{classifier::classify, screen_model::{DomElement, ElementKind, Form, ScreenElement}},
     state::{state_builder::build_state, state_model::ScreenState},
     trace::logger::TraceLogger,
 };
@@ -609,4 +610,143 @@ fn execute_action_errors_on_missing_element() {
         &state,
     );
     assert!(click.is_err(), "ClickAction must fail for missing element");
+}
+
+// =========================================================================
+// Policy tests: DeterministicPolicy behavior and Agent integration
+// =========================================================================
+
+/// Helper: build a minimal ScreenState with one form containing one input and one action.
+fn mock_screen_with_form() -> ScreenState {
+    ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test Page".into(),
+        forms: vec![Form {
+            id: "login".into(),
+            inputs: vec![ScreenElement {
+                label: Some("Username".into()),
+                kind: ElementKind::Input,
+                tag: Some("input".into()),
+                role: Some("textbox".into()),
+                input_type: Some("text".into()),
+            }],
+            actions: vec![ScreenElement {
+                label: Some("Sign In".into()),
+                kind: ElementKind::Action,
+                tag: Some("button".into()),
+                role: Some("button".into()),
+                input_type: Some("submit".into()),
+            }],
+            primary_action: None,
+            intent: None,
+        }],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    }
+}
+
+/// Helper: build a SemanticStateDiff with a single signal.
+fn diff_with_signal(signal: SemanticSignal) -> SemanticStateDiff {
+    SemanticStateDiff {
+        forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
+        standalone_actions: ActionDiff { added: vec![], removed: vec![] },
+        outputs: OutputDiff { added: vec![], removed: vec![] },
+        signals: vec![signal],
+    }
+}
+
+#[test]
+fn deterministic_policy_fills_input_on_screen_loaded() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form();
+    let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory);
+    assert!(decision.is_some(), "Should return a decision for ScreenLoaded");
+
+    let decision = decision.unwrap();
+    assert!(matches!(decision.decision, DecisionType::Act));
+    assert!(matches!(
+        decision.next_action,
+        Some(AgentAction::FillInput { ref form_id, .. }) if form_id == "login"
+    ));
+    assert!(decision.confidence >= 0.65, "Confidence must pass gating threshold");
+}
+
+#[test]
+fn deterministic_policy_waits_on_form_submitted() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form();
+    let diff = diff_with_signal(SemanticSignal::FormSubmitted {
+        form_id: "login".into(),
+    });
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    assert!(matches!(decision.decision, DecisionType::Wait));
+    assert!(matches!(decision.next_action, Some(AgentAction::Wait { .. })));
+}
+
+#[test]
+fn deterministic_policy_returns_none_on_noop() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form();
+    let diff = diff_with_signal(SemanticSignal::NoOp);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory);
+    assert!(decision.is_none(), "DeterministicPolicy must return None on NoOp");
+}
+
+#[test]
+fn agent_with_deterministic_policy() {
+    let tracer = TraceLogger::new("deterministic_trace.jsonl");
+    let mut agent = Agent::with_deterministic();
+
+    let pages = vec![
+        "01_search_form.html",
+        "02_search_submitted.html",
+        "03_search_results.html",
+    ];
+
+    let mut prev_state: Option<CanonicalScreenState> = None;
+    let mut actions_taken = 0;
+
+    for p in pages {
+        let raw = extract_screen(&page(p));
+        let dom = raw["dom"].as_array().unwrap();
+        let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into()).unwrap();
+
+        let semantics = classify(&elements);
+        let state = build_state(
+            Some(raw["url"].as_str().unwrap_or("test://fixture")),
+            raw["title"].as_str().unwrap_or(""),
+            semantics,
+        );
+
+        let canonical = canonicalize(&state, None);
+
+        let diff = match &prev_state {
+            Some(prev) => semantic_diff(prev, &canonical, false),
+            None => semantic_diff(&CanonicalScreenState::empty(), &canonical, true),
+        };
+
+        for _ in 0..5 {
+            if let Some(_action) = agent.step(&state, &diff, &tracer) {
+                actions_taken += 1;
+                break;
+            }
+        }
+
+        prev_state = Some(canonical);
+    }
+
+    assert!(actions_taken > 0, "Deterministic agent should take at least one action");
+    assert_eq!(
+        agent.memory.last_signal,
+        Some(SemanticSignal::ResultsAppeared),
+        "Agent should end with ResultsAppeared"
+    );
 }

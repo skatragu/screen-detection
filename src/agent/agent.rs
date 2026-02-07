@@ -5,10 +5,10 @@ use crate::{
     agent::{
         agent_model::{
             AgentAction, AgentMemory, AgentState, DecisionType, MAX_LOOP_REPEATS, MAX_RETRIES,
-            MIN_CONFIDENCE, ModelDecision,
+            MIN_CONFIDENCE, ModelDecision, Policy,
         },
         budget::{BudgetDecision, check_budgets},
-        ai_model::{ModelBackend, MockBackend, OllamaBackend},
+        ai_model::{DeterministicPolicy, HybridPolicy, ModelPolicy, MockBackend, OllamaBackend},
     },
     browser::playwright::{BrowserCommand, SelectorHint, execute_browser_action},
     canonical::diff::{SemanticSignal, SemanticStateDiff},
@@ -21,7 +21,7 @@ pub struct Agent {
     pub state: AgentState,
     pub memory: AgentMemory,
     pub step: u64,
-    backend: Box<dyn ModelBackend>,
+    policy: Box<dyn Policy>,
 }
 
 impl Agent {
@@ -31,7 +31,9 @@ impl Agent {
             state: AgentState::Observe,
             memory: AgentMemory::default(),
             step: 0,
-            backend: Box::new(OllamaBackend::default()),
+            policy: Box::new(ModelPolicy {
+                model: Box::new(OllamaBackend::default()),
+            }),
         }
     }
 
@@ -41,7 +43,9 @@ impl Agent {
             state: AgentState::Observe,
             memory: AgentMemory::default(),
             step: 0,
-            backend: Box::new(MockBackend),
+            policy: Box::new(ModelPolicy {
+                model: Box::new(MockBackend),
+            }),
         }
     }
 
@@ -51,7 +55,44 @@ impl Agent {
             state: AgentState::Observe,
             memory: AgentMemory::default(),
             step: 0,
-            backend: Box::new(OllamaBackend::new(endpoint, model)),
+            policy: Box::new(ModelPolicy {
+                model: Box::new(OllamaBackend::new(endpoint, model)),
+            }),
+        }
+    }
+
+    /// Create agent with deterministic rule-based policy (no LLM needed)
+    pub fn with_deterministic() -> Agent {
+        Agent {
+            state: AgentState::Observe,
+            memory: AgentMemory::default(),
+            step: 0,
+            policy: Box::new(DeterministicPolicy),
+        }
+    }
+
+    /// Create agent with hybrid policy (deterministic first, falls back to Ollama)
+    pub fn with_hybrid() -> Agent {
+        Agent {
+            state: AgentState::Observe,
+            memory: AgentMemory::default(),
+            step: 0,
+            policy: Box::new(HybridPolicy {
+                deterministic: DeterministicPolicy,
+                model: ModelPolicy {
+                    model: Box::new(OllamaBackend::default()),
+                },
+            }),
+        }
+    }
+
+    /// Create agent with a custom policy
+    pub fn with_policy(policy: Box<dyn Policy>) -> Agent {
+        Agent {
+            state: AgentState::Observe,
+            memory: AgentMemory::default(),
+            step: 0,
+            policy,
         }
     }
 
@@ -97,7 +138,7 @@ impl Agent {
             }
 
             AgentState::Think => {
-                let decision = self.backend.infer(screen, diff, &self.memory)
+                let decision = self.policy.decide(screen, diff, &self.memory)
                     .unwrap_or(ModelDecision {
                         decision: DecisionType::Wait,
                         next_action: None,
@@ -143,19 +184,6 @@ pub fn emit_observed_actions(diff: &SemanticStateDiff, memory: &mut AgentMemory)
             memory.attempt_count = 0; // reset retries on success
             memory.loop_count = 0;
         }
-    }
-}
-
-fn _call_model(
-    _screen: &ScreenState,
-    _diff: &SemanticStateDiff,
-    _memory: &AgentMemory,
-) -> ModelDecision {
-    // Placeholder: rule-based or mock
-    ModelDecision {
-        decision: DecisionType::Wait,
-        next_action: None,
-        confidence: 0.0,
     }
 }
 
