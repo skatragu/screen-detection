@@ -181,64 +181,6 @@ fn derive_signals(
     signals
 }
 
-// fn derive_signals(
-//     forms: &FormDiff,
-//     _actions: &ActionDiff,
-//     outputs: &OutputDiff,
-//     before: &CanonicalScreenState,
-//     after: &CanonicalScreenState,
-//     is_initial: bool,
-// ) -> Vec<SemanticSignal> {
-//     let mut signals = vec![];
-
-//     // ---- Screen loaded (first observation only) ----
-//     if is_initial {
-//         signals.push(SemanticSignal::ScreenLoaded);
-//         return signals; // important: isolate initial observation
-//     }
-
-//     let form_disappeared = !forms.removed.is_empty();
-//     let outputs_appeared = !outputs.added.is_empty();
-
-//     // ---- Navigation ----
-//     let navigation = form_disappeared && outputs_appeared && !outputs.removed.is_empty();
-
-//     if navigation {
-//         signals.push(SemanticSignal::NavigationOccurred);
-//     }
-
-//     let terminal_output_appeared = outputs
-//         .added
-//         .iter()
-//         .any(|id| output_is_error(id, after) || output_is_result(id, after));
-
-//     // ---- Form submission ----
-//     if form_disappeared && terminal_output_appeared {
-//         for form_id in &forms.removed {
-//             signals.push(SemanticSignal::FormSubmitted {
-//                 form_id: form_id.clone(),
-//             });
-//         }
-//     }
-
-//     // ---- Terminal outcome detection ----
-//     let error_added = outputs.added.iter().any(|id| output_is_error(id, after));
-//     let error_removed = outputs.removed.iter().any(|id| output_is_error(id, before));
-
-//     if error_added && !error_removed {
-//         signals.push(SemanticSignal::ErrorAppeared);
-//     } else if outputs_appeared && !navigation {
-//         signals.push(SemanticSignal::ResultsAppeared);
-//     }
-
-//     // ---- No-op fallback ----
-//     if signals.is_empty() {
-//         signals.push(SemanticSignal::NoOp);
-//     }
-
-//     signals
-// }
-
 fn output_is_error(id: &str, state: &CanonicalScreenState) -> bool {
     let el = match state.elements.get(id) {
         Some(e) => e,
@@ -262,17 +204,6 @@ fn output_is_error(id: &str, state: &CanonicalScreenState) -> bool {
         || text.contains("unable")
         || text.contains("not found")
 }
-
-// fn output_is_result(output_id: &str, after: &CanonicalScreenState) -> bool {
-//     !output_is_error(output_id, after)
-// }
-
-// fn output_is_result(output_id: &str, after: &CanonicalScreenState) -> bool {
-//     after
-//         .outputs
-//         .iter()
-//         .any(|o| o.id == output_id && !o.is_error && o.region == "Main")
-// }
 
 pub fn semantic_diff(
     before: &CanonicalScreenState,

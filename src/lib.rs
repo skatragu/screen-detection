@@ -1,6 +1,13 @@
 use crate::{
+    agent::{
+        agent::{ Agent, emit_observed_actions, execute_action },
+        agent_model::AgentState,
+    },
     browser::playwright::extract_screen,
-    canonical::{canonical_model::canonicalize, diff::semantic_diff},
+    canonical::{
+        canonical_model::{canonicalize, CanonicalScreenState},
+        diff::semantic_diff,
+    },
     screen::{classifier::classify, screen_model::DomElement},
     state::{diff::diff, state_builder::build_state},
     trace::logger::TraceLogger,
@@ -13,44 +20,78 @@ pub mod screen;
 pub mod state;
 pub mod trace;
 
+const MAX_ITERATIONS: u32 = 20;
+
 pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    let _tracer = TraceLogger::new("agent_trace.jsonl");
-    let url = "https://google.com";
+    let url = std::env::var("TARGET_URL").unwrap_or_else(|_| "https://google.com".to_string());
+    let tracer = TraceLogger::new("agent_trace.jsonl");
+    let mut agent = Agent::with_deterministic();
 
-    /* ---------- BASELINE STATE (EMPTY) ---------- */
+    println!("=== Starting agent loop for: {} ===\n", url);
 
-    // ---- First snapshot ----
-    let raw1 = extract_screen(url);
-    let dom1 = raw1["dom"].as_array().unwrap();
-    let elements1: Vec<DomElement> = serde_json::from_value(dom1.clone().into())?;
+    // ---- Initial snapshot ----
+    let (screen_state, canonical) = snapshot(&url)?;
+    let empty_canonical = CanonicalScreenState::empty();
+    let mut sem_diff = semantic_diff(&empty_canonical, &canonical, true);
 
-    let semantics1 = classify(&elements1);
-    let state1 = build_state(Some(url), raw1["title"].as_str().unwrap_or(""), semantics1);
+    println!("Initial signals: {:?}", sem_diff.signals);
 
-    // ---- Second snapshot (simulate after action for now) ----
-    let raw2 = extract_screen(url);
-    let dom2 = raw2["dom"].as_array().unwrap();
-    let elements2: Vec<DomElement> = serde_json::from_value(dom2.clone().into()).unwrap();
+    let mut prev_canonical = canonical;
+    let mut current_screen = screen_state;
 
-    let semantics2 = classify(&elements2);
+    // ---- Agent loop ----
+    for iteration in 0..MAX_ITERATIONS {
+        println!("\n--- Iteration {} (agent state: {:?}) ---", iteration, agent.state);
 
-    println!("=== SCREEN SEMANTICS ===\n");
-    let state2 = build_state(Some(url), raw2["title"].as_str().unwrap_or(""), semantics2);
+        // Feed observed signals back to agent memory
+        emit_observed_actions(&sem_diff, &mut agent.memory);
 
-    // ---- Diff ----
-    let identity_diff = diff(&state1, &state2);
+        // Step the agent state machine
+        if let Some(action) = agent.step(&current_screen, &sem_diff, &tracer) {
+            println!("Agent action: {:?}", action);
 
-    /* ---------- CANONICALIZATION (NEW) ---------- */
+            match execute_action(&action, &current_screen) {
+                Ok(()) => println!("Action executed successfully"),
+                Err(e) => println!("Action failed: {}", e),
+            }
+        }
 
-    //Identity diff is just added, but not used right now, focus right
-    // now is mostly on sematic diff
-    let canonical1 = canonicalize(&state1, Some(&identity_diff));
-    let canonical2 = canonicalize(&state2, Some(&identity_diff));
+        // Check for terminal state
+        if matches!(agent.state, AgentState::Stop) {
+            println!("\nAgent reached Stop state.");
+            break;
+        }
 
-    /* ---------- SEMANTIC DIFF (NEW) ---------- */
+        // Take new snapshot after action
+        let (new_screen, new_canonical) = snapshot(&url)?;
 
-    let semantic_diff = semantic_diff(&canonical1, &canonical2, true);
-    println!("=== SEMANTIC STATE DIFF ===\n{:#?}", semantic_diff);
+        // Compute diff against previous state
+        sem_diff = semantic_diff(&prev_canonical, &new_canonical, false);
 
+        if !sem_diff.signals.is_empty() {
+            println!("Signals: {:?}", sem_diff.signals);
+        }
+
+        prev_canonical = new_canonical;
+        current_screen = new_screen;
+    }
+
+    println!("\n=== Agent loop complete ===");
     Ok(())
+}
+
+/// Take a snapshot: extract DOM, classify, build state, canonicalize.
+fn snapshot(url: &str) -> Result<(crate::state::state_model::ScreenState, CanonicalScreenState), Box<dyn std::error::Error>> {
+    let raw = extract_screen(url);
+    let dom = raw["dom"]
+        .as_array()
+        .ok_or("DOM extraction returned no 'dom' array")?;
+    let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into())?;
+
+    let semantics = classify(&elements);
+    let screen_state = build_state(Some(url), raw["title"].as_str().unwrap_or(""), semantics);
+    let identity_diff = diff(&screen_state, &screen_state); // self-diff for canonicalization
+    let canonical = canonicalize(&screen_state, Some(&identity_diff));
+
+    Ok((screen_state, canonical))
 }
