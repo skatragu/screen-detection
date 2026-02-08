@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::error::Error as StdError;
 
 use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision, Policy},
         ai_model::{DeterministicPolicy, guess_value},
+        budget::{BudgetDecision, check_budgets},
         error::AgentError,
     },
     browser::playwright::{SelectorHint, extract_screen},
@@ -12,8 +14,16 @@ use screen_detection::{
         canonical_model::{CanonicalScreenState, canonicalize},
         diff::{ActionDiff, FormDiff, OutputDiff, SemanticSignal, SemanticStateDiff, semantic_diff},
     },
-    screen::{classifier::classify, screen_model::{DomElement, ElementKind, Form, ScreenElement}},
-    state::{state_builder::build_state, state_model::ScreenState},
+    screen::{
+        classifier::classify,
+        intent::infer_form_intent,
+        screen_model::{DomElement, ElementKind, Form, ScreenElement},
+    },
+    state::{
+        normalize::normalize_output_text,
+        state_builder::build_state,
+        state_model::ScreenState,
+    },
     trace::logger::TraceLogger,
 };
 
@@ -878,4 +888,369 @@ fn deterministic_policy_multi_input_form() {
         }
         other => panic!("Expected FillAndSubmitForm, got {:?}", other),
     }
+}
+
+// =========================================================================
+// AgentError Display and source chain tests
+// =========================================================================
+
+#[test]
+fn agent_error_display_messages() {
+    let missing = AgentError::MissingState("no url".into());
+    assert!(missing.to_string().contains("Missing state"), "MissingState display");
+    assert!(missing.to_string().contains("no url"), "MissingState contains detail");
+
+    let browser = AgentError::BrowserAction("timeout".into());
+    assert!(browser.to_string().contains("Browser action failed"), "BrowserAction display");
+    assert!(browser.to_string().contains("timeout"), "BrowserAction contains detail");
+
+    let dom = AgentError::DomStructure("no dom array".into());
+    assert!(dom.to_string().contains("Unexpected DOM"), "DomStructure display");
+    assert!(dom.to_string().contains("no dom array"), "DomStructure contains detail");
+
+    let not_found = AgentError::ElementNotFound {
+        element: "Submit".into(),
+        context: "form 'login'".into(),
+    };
+    assert!(not_found.to_string().contains("Submit"), "ElementNotFound contains element");
+    assert!(not_found.to_string().contains("form 'login'"), "ElementNotFound contains context");
+}
+
+#[test]
+fn agent_error_source_chain() {
+    // JsonParse wraps serde_json::Error → source() is Some
+    let json_err: serde_json::Error = serde_json::from_str::<String>("not json").unwrap_err();
+    let parse = AgentError::JsonParse {
+        context: "test".into(),
+        source: json_err,
+    };
+    assert!(parse.source().is_some(), "JsonParse should have a source");
+
+    // BrowserAction → no source
+    let browser = AgentError::BrowserAction("fail".into());
+    assert!(browser.source().is_none(), "BrowserAction should have no source");
+
+    // MissingState → no source
+    let missing = AgentError::MissingState("x".into());
+    assert!(missing.source().is_none(), "MissingState should have no source");
+
+    // ElementNotFound → no source
+    let not_found = AgentError::ElementNotFound {
+        element: "x".into(),
+        context: "y".into(),
+    };
+    assert!(not_found.source().is_none(), "ElementNotFound should have no source");
+}
+
+// =========================================================================
+// DeterministicPolicy — untested signal branches
+// =========================================================================
+
+#[test]
+fn deterministic_policy_waits_on_results_appeared() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form();
+    let diff = diff_with_signal(SemanticSignal::ResultsAppeared);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    assert!(matches!(decision.decision, DecisionType::Wait));
+    match &decision.next_action {
+        Some(AgentAction::Wait { reason }) => {
+            assert!(reason.contains("Results appeared"), "Reason: {}", reason);
+        }
+        other => panic!("Expected Wait action, got {:?}", other),
+    }
+}
+
+#[test]
+fn deterministic_policy_waits_on_navigation_occurred() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form();
+    let diff = diff_with_signal(SemanticSignal::NavigationOccurred);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    assert!(matches!(decision.decision, DecisionType::Wait));
+    match &decision.next_action {
+        Some(AgentAction::Wait { reason }) => {
+            assert!(reason.contains("Navigation occurred"), "Reason: {}", reason);
+        }
+        other => panic!("Expected Wait action, got {:?}", other),
+    }
+}
+
+#[test]
+fn deterministic_policy_waits_on_error_appeared() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form();
+    let diff = diff_with_signal(SemanticSignal::ErrorAppeared);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    assert!(matches!(decision.decision, DecisionType::Wait));
+    match &decision.next_action {
+        Some(AgentAction::Wait { reason }) => {
+            assert!(reason.contains("Error appeared"), "Reason: {}", reason);
+        }
+        other => panic!("Expected Wait action, got {:?}", other),
+    }
+}
+
+// =========================================================================
+// DeterministicPolicy — edge cases
+// =========================================================================
+
+#[test]
+fn deterministic_policy_no_forms_returns_none() {
+    let policy = DeterministicPolicy;
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Empty Page".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
+    let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory);
+    assert!(decision.is_none(), "ScreenLoaded with no forms should return None");
+}
+
+#[test]
+fn deterministic_policy_form_no_inputs_still_submits() {
+    let policy = DeterministicPolicy;
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Action Only".into(),
+        forms: vec![Form {
+            id: "confirm".into(),
+            inputs: vec![],
+            actions: vec![ScreenElement {
+                label: Some("Confirm".into()),
+                kind: ElementKind::Action,
+                tag: Some("button".into()),
+                role: Some("button".into()),
+                input_type: Some("submit".into()),
+            }],
+            primary_action: None,
+            intent: None,
+        }],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
+    let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    assert!(matches!(decision.decision, DecisionType::Act));
+
+    match &decision.next_action {
+        Some(AgentAction::FillAndSubmitForm { form_id, values, submit_label }) => {
+            assert_eq!(form_id, "confirm");
+            assert!(values.is_empty(), "No inputs means empty values vec");
+            assert_eq!(submit_label.as_deref(), Some("Confirm"));
+        }
+        other => panic!("Expected FillAndSubmitForm, got {:?}", other),
+    }
+}
+
+// =========================================================================
+// Budget gating tests
+// =========================================================================
+
+#[test]
+fn budget_blocks_when_think_exhausted() {
+    let mut memory = AgentMemory::default();
+    memory.think_budget_remaining = 0;
+
+    let action = AgentAction::Wait { reason: "test".into() };
+    let result = check_budgets(&memory, &action);
+    assert!(
+        matches!(result, BudgetDecision::Block("think_budget_exhausted")),
+        "Expected think_budget_exhausted, got {:?}", result
+    );
+}
+
+#[test]
+fn budget_blocks_when_retry_exhausted() {
+    let mut memory = AgentMemory::default();
+    let action = AgentAction::Wait { reason: "same".into() };
+    memory.last_action = Some(action.clone());
+    memory.retry_budget_remaining = 0;
+
+    let result = check_budgets(&memory, &action);
+    assert!(
+        matches!(result, BudgetDecision::Block("retry_budget_exhausted")),
+        "Expected retry_budget_exhausted, got {:?}", result
+    );
+}
+
+#[test]
+fn budget_blocks_when_loop_exhausted() {
+    let mut memory = AgentMemory::default();
+    memory.loop_budget_remaining = 0;
+
+    let action = AgentAction::Wait { reason: "test".into() };
+    let result = check_budgets(&memory, &action);
+    assert!(
+        matches!(result, BudgetDecision::Block("loop_budget_exhausted")),
+        "Expected loop_budget_exhausted, got {:?}", result
+    );
+}
+
+// =========================================================================
+// gate_decision — confidence gate
+// =========================================================================
+
+#[test]
+fn gate_decision_rejects_low_confidence() {
+    let mut memory = AgentMemory::default();
+    let decision = ModelDecision {
+        decision: DecisionType::Act,
+        next_action: Some(AgentAction::Wait { reason: "test".into() }),
+        confidence: 0.3,
+    };
+
+    let result = gate_decision(decision, &mut memory);
+    assert!(result.is_none(), "Low confidence should be gated");
+}
+
+// =========================================================================
+// normalize_output_text edge cases
+// =========================================================================
+
+#[test]
+fn normalize_output_text_filters_junk() {
+    assert_eq!(normalize_output_text(""), None, "Empty string");
+    assert_eq!(normalize_output_text("   "), None, "Whitespace only");
+    assert_eq!(normalize_output_text("function(x){return x}"), None, "JS blob");
+    assert_eq!(normalize_output_text("var x = 42"), None, "JS var");
+    assert_eq!(normalize_output_text("window.location"), None, "JS window");
+    assert_eq!(normalize_output_text("document.getElementById"), None, "JS document");
+    assert_eq!(normalize_output_text("a1!@#$%^&*()"), None, "High non-alpha ratio");
+    assert_eq!(normalize_output_text("ab"), None, "Too short after normalize");
+}
+
+#[test]
+fn normalize_output_text_normalizes_valid_text() {
+    assert_eq!(
+        normalize_output_text("  Hello   World  "),
+        Some("hello world".into()),
+        "Collapses whitespace and lowercases"
+    );
+    assert_eq!(
+        normalize_output_text("Search Results: 42 items"),
+        Some("search results: 42 items".into()),
+        "Normalizes mixed-case text"
+    );
+    assert_eq!(
+        normalize_output_text("This is a valid sentence"),
+        Some("this is a valid sentence".into()),
+        "Plain text passes through"
+    );
+}
+
+// =========================================================================
+// Form intent scoring boundaries
+// =========================================================================
+
+#[test]
+fn form_intent_scoring_boundaries() {
+    // No signals → Unknown, confidence 0.0
+    let plain_form = Form {
+        id: "plain".into(),
+        inputs: vec![ScreenElement {
+            label: Some("Name".into()),
+            kind: ElementKind::Input,
+            tag: Some("input".into()),
+            role: None,
+            input_type: Some("text".into()),
+        }],
+        actions: vec![ScreenElement {
+            label: Some("Submit".into()),
+            kind: ElementKind::Action,
+            tag: Some("button".into()),
+            role: None,
+            input_type: Some("submit".into()),
+        }],
+        primary_action: None,
+        intent: None,
+    };
+    let intent = infer_form_intent(&plain_form);
+    assert_eq!(intent.label, "Unknown", "No auth signals → Unknown");
+    assert_eq!(intent.confidence, 0.0, "No signals → 0.0 confidence");
+
+    // Password only (score=0.4) → NOT > 0.4, so "Unknown"
+    let password_form = Form {
+        id: "pw".into(),
+        inputs: vec![ScreenElement {
+            label: Some("Password".into()),
+            kind: ElementKind::Input,
+            tag: Some("input".into()),
+            role: None,
+            input_type: Some("password".into()),
+        }],
+        actions: vec![ScreenElement {
+            label: Some("Submit".into()),
+            kind: ElementKind::Action,
+            tag: Some("button".into()),
+            role: None,
+            input_type: Some("submit".into()),
+        }],
+        primary_action: None,
+        intent: None,
+    };
+    let intent = infer_form_intent(&password_form);
+    assert_eq!(intent.label, "Unknown", "score=0.4 is NOT > 0.4, so Unknown");
+
+    // Login action only (score=0.4) → "Unknown"
+    let login_form = Form {
+        id: "login".into(),
+        inputs: vec![ScreenElement {
+            label: Some("Username".into()),
+            kind: ElementKind::Input,
+            tag: Some("input".into()),
+            role: None,
+            input_type: Some("text".into()),
+        }],
+        actions: vec![ScreenElement {
+            label: Some("Login".into()),
+            kind: ElementKind::Action,
+            tag: Some("button".into()),
+            role: None,
+            input_type: Some("submit".into()),
+        }],
+        primary_action: None,
+        intent: None,
+    };
+    let intent = infer_form_intent(&login_form);
+    assert_eq!(intent.label, "Unknown", "Login action only → score=0.4 → Unknown");
+
+    // Password + Sign In (score=0.8) → Authentication
+    let auth_form = Form {
+        id: "auth".into(),
+        inputs: vec![ScreenElement {
+            label: Some("Password".into()),
+            kind: ElementKind::Input,
+            tag: Some("input".into()),
+            role: None,
+            input_type: Some("password".into()),
+        }],
+        actions: vec![ScreenElement {
+            label: Some("Sign In".into()),
+            kind: ElementKind::Action,
+            tag: Some("button".into()),
+            role: None,
+            input_type: Some("submit".into()),
+        }],
+        primary_action: None,
+        intent: None,
+    };
+    let intent = infer_form_intent(&auth_form);
+    assert_eq!(intent.label, "Authentication", "Password + Sign In → Authentication");
+    assert!(intent.confidence > 0.7, "Confidence should exceed 0.7");
 }

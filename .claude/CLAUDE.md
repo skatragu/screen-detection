@@ -60,7 +60,7 @@ cargo test
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 30 integration tests covering classification, diffing, signals, agent behavior, browser command serialization, policy logic, guess_value heuristics, and error handling
+- 44 integration tests covering classification, diffing, signals, agent behavior, browser command serialization, policy logic, guess_value heuristics, error handling, budget gating, normalize edge cases, and form intent scoring
 
 ## External Dependencies
 
