@@ -5,6 +5,7 @@ use screen_detection::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision, Policy},
         ai_model::{DeterministicPolicy, guess_value},
+        error::AgentError,
     },
     browser::playwright::{SelectorHint, extract_screen},
     canonical::{
@@ -210,7 +211,7 @@ fn agent_completes_search_flow() {
     let mut prev_state: Option<CanonicalScreenState> = None;
 
     for p in pages {
-        let raw = extract_screen(&page(p));
+        let raw = extract_screen(&page(p)).unwrap();
         let dom = raw["dom"].as_array().unwrap();
         let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into()).unwrap();
 
@@ -263,7 +264,7 @@ fn agent_does_not_act_on_noop() {
 
     let diff = diff_static(&page("01_search_form.html"));
 
-    let raw = extract_screen(&page("01_search_form.html"));
+    let raw = extract_screen(&page("01_search_form.html")).unwrap();
     let dom = raw["dom"].as_array().unwrap();
     let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into()).unwrap();
 
@@ -292,7 +293,7 @@ fn agent_stops_after_repeated_error() {
     let mut last_action = None;
 
     for p in pages {
-        let raw = extract_screen(&page(p));
+        let raw = extract_screen(&page(p)).unwrap();
         let dom = raw["dom"].as_array().unwrap();
         let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into()).unwrap();
 
@@ -376,7 +377,7 @@ fn agent_loop_with_mock_backend() {
         println!("--- {} ({}) ---", description, page_file);
 
         // Load page
-        let raw = extract_screen(&page(page_file));
+        let raw = extract_screen(&page(page_file)).unwrap();
         let dom = raw["dom"].as_array().unwrap();
         let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into()).unwrap();
 
@@ -562,8 +563,8 @@ fn execute_action_errors_on_missing_url() {
     let result = execute_action(&action, &state);
     assert!(result.is_err(), "Must fail when URL is missing");
     assert!(
-        result.unwrap_err().contains("No URL"),
-        "Error message should mention missing URL"
+        matches!(result.unwrap_err(), AgentError::MissingState(_)),
+        "Error should be MissingState variant"
     );
 }
 
@@ -589,6 +590,10 @@ fn execute_action_errors_on_missing_element() {
         &state,
     );
     assert!(fill.is_err(), "FillInput must fail for missing element");
+    assert!(
+        matches!(fill.unwrap_err(), AgentError::ElementNotFound { .. }),
+        "FillInput error should be ElementNotFound"
+    );
 
     // SubmitForm with unknown identity
     let submit = execute_action(
@@ -600,6 +605,10 @@ fn execute_action_errors_on_missing_element() {
         &state,
     );
     assert!(submit.is_err(), "SubmitForm must fail for missing element");
+    assert!(
+        matches!(submit.unwrap_err(), AgentError::ElementNotFound { .. }),
+        "SubmitForm error should be ElementNotFound"
+    );
 
     // ClickAction with unknown identity
     let click = execute_action(
@@ -610,6 +619,10 @@ fn execute_action_errors_on_missing_element() {
         &state,
     );
     assert!(click.is_err(), "ClickAction must fail for missing element");
+    assert!(
+        matches!(click.unwrap_err(), AgentError::ElementNotFound { .. }),
+        "ClickAction error should be ElementNotFound"
+    );
 }
 
 // =========================================================================
@@ -715,7 +728,7 @@ fn agent_with_deterministic_policy() {
     let mut actions_taken = 0;
 
     for p in pages {
-        let raw = extract_screen(&page(p));
+        let raw = extract_screen(&page(p)).unwrap();
         let dom = raw["dom"].as_array().unwrap();
         let elements: Vec<DomElement> = serde_json::from_value(dom.clone().into()).unwrap();
 

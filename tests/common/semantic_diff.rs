@@ -38,32 +38,32 @@ fn run_diff_from_raw(raw1: Value, raw2: Value, is_initial: bool) -> SemanticStat
 }
 
 pub fn diff_static(url: &str) -> SemanticStateDiff {
-    let raw1 = extract_screen(url);
-    let raw2 = extract_screen(url);
+    let raw1 = extract_screen(url).unwrap();
+    let raw2 = extract_screen(url).unwrap();
 
     run_diff_from_raw(raw1, raw2, true)
 }
 
 pub fn diff_static_with_initial_flag(url: &str, is_initial: bool) -> SemanticStateDiff {
-    let raw1 = extract_screen(url);
-    let raw2 = extract_screen(url);
+    let raw1 = extract_screen(url).unwrap();
+    let raw2 = extract_screen(url).unwrap();
 
     run_diff_from_raw(raw1, raw2, is_initial)
 }
 
 pub fn diff_mutating(url: &str, wait_ms: u64) -> SemanticStateDiff {
-    let raw1 = extract_screen(url);
+    let raw1 = extract_screen(url).unwrap();
 
     sleep(Duration::from_millis(wait_ms));
 
-    let raw2 = extract_screen(url);
+    let raw2 = extract_screen(url).unwrap();
 
     run_diff_from_raw(raw1, raw2, false)
 }
 
 pub fn diff_between_pages(url1: &str, url2: &str) -> SemanticStateDiff {
-    let raw1 = extract_screen(url1);
-    let raw2 = extract_screen(url2);
+    let raw1 = extract_screen(url1).unwrap();
+    let raw2 = extract_screen(url2).unwrap();
 
     run_diff_from_raw(raw1, raw2, false)
 }

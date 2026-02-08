@@ -82,7 +82,7 @@ pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Take a snapshot: extract DOM, classify, build state, canonicalize.
 fn snapshot(url: &str) -> Result<(crate::state::state_model::ScreenState, CanonicalScreenState), Box<dyn std::error::Error>> {
-    let raw = extract_screen(url);
+    let raw = extract_screen(url)?;
     let dom = raw["dom"]
         .as_array()
         .ok_or("DOM extraction returned no 'dom' array")?;

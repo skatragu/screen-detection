@@ -2,15 +2,32 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::process::Command;
 
-pub fn extract_screen(url: &str) -> Value {
+use crate::agent::error::AgentError;
+
+pub fn extract_screen(url: &str) -> Result<Value, AgentError> {
     let output = Command::new("node")
         .arg("../../node/dom-extraction/extract.js")
         .arg(url)
         .output()
-        .expect("Failed to run Playwright");
+        .map_err(|e| AgentError::SubprocessSpawn {
+            script: "extract.js".into(),
+            source: e,
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AgentError::SubprocessFailed {
+            script: "extract.js".into(),
+            status: output.status,
+            stderr: stderr.trim().to_string(),
+        });
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout).expect("Invalid JSON from Playwright")
+    serde_json::from_str(&stdout).map_err(|e| AgentError::JsonParse {
+        context: "extract.js output".into(),
+        source: e,
+    })
 }
 
 /// Selector hints used by interact.js to locate elements in the DOM.
@@ -49,15 +66,20 @@ pub struct BrowserResult {
 }
 
 /// Execute a browser action via the interact.js Node.js subprocess.
-pub fn execute_browser_action(command: &BrowserCommand) -> Result<(), String> {
-    let command_json = serde_json::to_string(command)
-        .map_err(|e| format!("Failed to serialize command: {}", e))?;
+pub fn execute_browser_action(command: &BrowserCommand) -> Result<(), AgentError> {
+    let command_json = serde_json::to_string(command).map_err(|e| AgentError::JsonSerialize {
+        context: "BrowserCommand".into(),
+        source: e,
+    })?;
 
     let output = Command::new("node")
         .arg("../../node/dom-extraction/interact.js")
         .arg(&command_json)
         .output()
-        .map_err(|e| format!("Failed to spawn interact.js: {}", e))?;
+        .map_err(|e| AgentError::SubprocessSpawn {
+            script: "interact.js".into(),
+            source: e,
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -66,12 +88,17 @@ pub fn execute_browser_action(command: &BrowserCommand) -> Result<(), String> {
         eprintln!("[interact.js] {}", stderr.trim());
     }
 
-    let result: BrowserResult = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Invalid JSON from interact.js: {} (stdout: {})", e, stdout))?;
+    let result: BrowserResult =
+        serde_json::from_str(&stdout).map_err(|e| AgentError::JsonParse {
+            context: "interact.js response".into(),
+            source: e,
+        })?;
 
     if result.success {
         Ok(())
     } else {
-        Err(result.error.unwrap_or_else(|| "Unknown error".into()))
+        Err(AgentError::BrowserAction(
+            result.error.unwrap_or_else(|| "Unknown error".into()),
+        ))
     }
 }

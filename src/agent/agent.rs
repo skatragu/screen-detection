@@ -9,6 +9,7 @@ use crate::{
         },
         budget::{BudgetDecision, check_budgets},
         ai_model::{DeterministicPolicy, HybridPolicy, ModelPolicy, MockBackend, OllamaBackend},
+        error::AgentError,
     },
     browser::playwright::{BrowserCommand, SelectorHint, execute_browser_action},
     canonical::diff::{SemanticSignal, SemanticStateDiff},
@@ -198,11 +199,11 @@ fn selector_from_target(target: &IdentifiedElement, form_id: Option<&str>) -> Se
     }
 }
 
-pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), String> {
+pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), AgentError> {
     let url = state
         .url
         .as_deref()
-        .ok_or_else(|| "No URL in screen state".to_string())?;
+        .ok_or_else(|| AgentError::MissingState("No URL in screen state".into()))?;
 
     match action {
         AgentAction::FillInput {
@@ -213,8 +214,9 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
         } => {
             let target = resolve_target(identity, state)
                 .or_else(|| find_input_by_label(form_id, input_label, state))
-                .ok_or_else(|| {
-                    format!("Input '{}' not found in form '{}'", input_label, form_id)
+                .ok_or_else(|| AgentError::ElementNotFound {
+                    element: input_label.clone(),
+                    context: format!("form '{}'", form_id),
                 })?;
 
             println!(
@@ -239,11 +241,9 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
         } => {
             let target = resolve_target(identity, state)
                 .or_else(|| find_form_action_by_label(form_id, action_label, state))
-                .ok_or_else(|| {
-                    format!(
-                        "Submit action '{}' not found in form '{}'",
-                        action_label, form_id
-                    )
+                .ok_or_else(|| AgentError::ElementNotFound {
+                    element: action_label.clone(),
+                    context: format!("form '{}'", form_id),
                 })?;
 
             println!(
@@ -292,11 +292,9 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
             // Submit if a submit label is provided
             if let Some(label) = submit_label {
                 let target = find_form_action_by_label(form_id, label, state)
-                    .ok_or_else(|| {
-                        format!(
-                            "Submit action '{}' not found in form '{}'",
-                            label, form_id
-                        )
+                    .ok_or_else(|| AgentError::ElementNotFound {
+                        element: label.clone(),
+                        context: format!("form '{}'", form_id),
                     })?;
 
                 println!(
@@ -320,7 +318,10 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
         AgentAction::ClickAction { label, identity } => {
             let target = resolve_target(identity, state)
                 .or_else(|| find_standalone_action_by_label(label, state))
-                .ok_or_else(|| format!("Standalone action '{}' not found", label))?;
+                .ok_or_else(|| AgentError::ElementNotFound {
+                    element: label.clone(),
+                    context: "standalone actions".into(),
+                })?;
 
             println!("Clicking standalone action [{}] '{}'", target.id, label);
 
