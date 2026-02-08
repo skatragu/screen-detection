@@ -261,6 +261,62 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), S
             execute_browser_action(&command)
         }
 
+        AgentAction::FillAndSubmitForm {
+            form_id,
+            values,
+            submit_label,
+        } => {
+            // Fill each input sequentially
+            for (input_label, value) in values {
+                let target = find_input_by_label(form_id, input_label, state);
+
+                if let Some(target) = target {
+                    println!(
+                        "Filling input [{}] '{}' with '{}'",
+                        target.id, input_label, value
+                    );
+
+                    let command = BrowserCommand {
+                        action: "fill".into(),
+                        url: url.to_string(),
+                        value: Some(value.clone()),
+                        selector: Some(selector_from_target(target, Some(form_id))),
+                        duration_ms: None,
+                    };
+                    execute_browser_action(&command)?;
+                } else {
+                    println!("Warning: input '{}' not found in form '{}', skipping", input_label, form_id);
+                }
+            }
+
+            // Submit if a submit label is provided
+            if let Some(label) = submit_label {
+                let target = find_form_action_by_label(form_id, label, state)
+                    .ok_or_else(|| {
+                        format!(
+                            "Submit action '{}' not found in form '{}'",
+                            label, form_id
+                        )
+                    })?;
+
+                println!(
+                    "Submitting form '{}' via action [{}] '{}'",
+                    form_id, target.id, label
+                );
+
+                let command = BrowserCommand {
+                    action: "click".into(),
+                    url: url.to_string(),
+                    value: None,
+                    selector: Some(selector_from_target(target, Some(form_id))),
+                    duration_ms: None,
+                };
+                execute_browser_action(&command)?;
+            }
+
+            Ok(())
+        }
+
         AgentAction::ClickAction { label, identity } => {
             let target = resolve_target(identity, state)
                 .or_else(|| find_standalone_action_by_label(label, state))
@@ -348,10 +404,12 @@ pub fn gate_decision(decision: ModelDecision, memory: &mut AgentMemory) -> Optio
     }) = &memory.last_confirmed_action
     {
         if let Some(next_action) = decision.next_action.as_ref() {
-            if let AgentAction::SubmitForm {
-                form_id: next_form, ..
-            } = next_action
-            {
+            let next_form = match next_action {
+                AgentAction::SubmitForm { form_id, .. } => Some(form_id.as_str()),
+                AgentAction::FillAndSubmitForm { form_id, .. } => Some(form_id.as_str()),
+                _ => None,
+            };
+            if let Some(next_form) = next_form {
                 if submitted_form == next_form {
                     println!(
                         "Form '{}' already submitted successfully — blocking retry",

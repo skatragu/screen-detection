@@ -4,7 +4,7 @@ use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision, Policy},
-        ai_model::DeterministicPolicy,
+        ai_model::{DeterministicPolicy, guess_value},
     },
     browser::playwright::{SelectorHint, extract_screen},
     canonical::{
@@ -670,7 +670,7 @@ fn deterministic_policy_fills_input_on_screen_loaded() {
     assert!(matches!(decision.decision, DecisionType::Act));
     assert!(matches!(
         decision.next_action,
-        Some(AgentAction::FillInput { ref form_id, .. }) if form_id == "login"
+        Some(AgentAction::FillAndSubmitForm { ref form_id, .. }) if form_id == "login"
     ));
     assert!(decision.confidence >= 0.65, "Confidence must pass gating threshold");
 }
@@ -749,4 +749,120 @@ fn agent_with_deterministic_policy() {
         Some(SemanticSignal::ResultsAppeared),
         "Agent should end with ResultsAppeared"
     );
+}
+
+// =========================================================================
+// guess_value and FillAndSubmitForm tests
+// =========================================================================
+
+#[test]
+fn guess_value_uses_label_heuristics() {
+    assert_eq!(guess_value("email", None), "user@example.com");
+    assert_eq!(guess_value("Email Address", None), "user@example.com");
+    assert_eq!(guess_value("password", None), "TestPass123!");
+    assert_eq!(guess_value("Phone Number", None), "555-0100");
+    assert_eq!(guess_value("search", None), "test query");
+    assert_eq!(guess_value("query", None), "test query");
+    assert_eq!(guess_value("username", None), "testuser");
+    assert_eq!(guess_value("Full Name", None), "Jane Doe");
+    assert_eq!(guess_value("zip code", None), "90210");
+    assert_eq!(guess_value("some random field", None), "test");
+}
+
+#[test]
+fn guess_value_falls_back_to_input_type() {
+    // Generic label, but specific input type
+    assert_eq!(guess_value("enter value", Some("email")), "user@example.com");
+    assert_eq!(guess_value("enter value", Some("password")), "TestPass123!");
+    assert_eq!(guess_value("enter value", Some("tel")), "555-0100");
+    assert_eq!(guess_value("enter value", Some("number")), "42");
+    assert_eq!(guess_value("enter value", Some("date")), "2025-01-15");
+    // Unknown type falls to final fallback
+    assert_eq!(guess_value("enter value", Some("text")), "test");
+}
+
+#[test]
+fn deterministic_policy_returns_fill_and_submit() {
+    let policy = DeterministicPolicy;
+    let screen = mock_screen_with_form(); // has "Username" input + "Sign In" action
+    let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    assert!(matches!(decision.decision, DecisionType::Act));
+
+    match &decision.next_action {
+        Some(AgentAction::FillAndSubmitForm { form_id, values, submit_label }) => {
+            assert_eq!(form_id, "login");
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].0, "Username");
+            assert_eq!(values[0].1, "testuser"); // "Username" label → "testuser"
+            assert_eq!(submit_label.as_deref(), Some("Sign In"));
+        }
+        other => panic!("Expected FillAndSubmitForm, got {:?}", other),
+    }
+}
+
+#[test]
+fn deterministic_policy_multi_input_form() {
+    let policy = DeterministicPolicy;
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Signup".into(),
+        forms: vec![Form {
+            id: "signup".into(),
+            inputs: vec![
+                ScreenElement {
+                    label: Some("Email".into()),
+                    kind: ElementKind::Input,
+                    tag: Some("input".into()),
+                    role: Some("textbox".into()),
+                    input_type: Some("email".into()),
+                },
+                ScreenElement {
+                    label: Some("Password".into()),
+                    kind: ElementKind::Input,
+                    tag: Some("input".into()),
+                    role: None,
+                    input_type: Some("password".into()),
+                },
+                ScreenElement {
+                    label: Some("Phone".into()),
+                    kind: ElementKind::Input,
+                    tag: Some("input".into()),
+                    role: None,
+                    input_type: Some("tel".into()),
+                },
+            ],
+            actions: vec![ScreenElement {
+                label: Some("Register".into()),
+                kind: ElementKind::Action,
+                tag: Some("button".into()),
+                role: Some("button".into()),
+                input_type: Some("submit".into()),
+            }],
+            primary_action: None,
+            intent: None,
+        }],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
+
+    let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
+    let memory = AgentMemory::default();
+
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+
+    match &decision.next_action {
+        Some(AgentAction::FillAndSubmitForm { form_id, values, submit_label }) => {
+            assert_eq!(form_id, "signup");
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0], ("Email".to_string(), "user@example.com".to_string()));
+            assert_eq!(values[1], ("Password".to_string(), "TestPass123!".to_string()));
+            assert_eq!(values[2], ("Phone".to_string(), "555-0100".to_string()));
+            assert_eq!(submit_label.as_deref(), Some("Register"));
+        }
+        other => panic!("Expected FillAndSubmitForm, got {:?}", other),
+    }
 }

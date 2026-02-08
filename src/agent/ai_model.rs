@@ -34,6 +34,58 @@ pub trait ModelBackend {
 
 pub struct DeterministicPolicy;
 
+/// Derive a sensible fill value from the input's label and type.
+pub fn guess_value(label: &str, input_type: Option<&str>) -> String {
+    let l = label.to_lowercase();
+
+    // Label-based heuristics (checked in order)
+    if l.contains("email") {
+        return "user@example.com".into();
+    }
+    if l.contains("password") {
+        return "TestPass123!".into();
+    }
+    if l.contains("phone") || l.contains("tel") {
+        return "555-0100".into();
+    }
+    if l.contains("url") || l.contains("website") {
+        return "https://example.com".into();
+    }
+    if l.contains("zip") || l.contains("postal") {
+        return "90210".into();
+    }
+    if l.contains("username") || l.contains("user") {
+        return "testuser".into();
+    }
+    if l.contains("name") {
+        return "Jane Doe".into();
+    }
+    if l.contains("search") || l.contains("query") {
+        return "test query".into();
+    }
+    if l.contains("date") {
+        return "2025-01-15".into();
+    }
+    if l.contains("number") || l.contains("amount") || l.contains("quantity") {
+        return "42".into();
+    }
+
+    // Fallback to input_type
+    if let Some(t) = input_type {
+        match t {
+            "email" => return "user@example.com".into(),
+            "password" => return "TestPass123!".into(),
+            "tel" => return "555-0100".into(),
+            "url" => return "https://example.com".into(),
+            "number" => return "42".into(),
+            "date" => return "2025-01-15".into(),
+            _ => {}
+        }
+    }
+
+    "test".into()
+}
+
 impl Policy for DeterministicPolicy {
     fn decide(
         &self,
@@ -46,15 +98,29 @@ impl Policy for DeterministicPolicy {
         let (decision_type, action) = match signal {
             SemanticSignal::ScreenLoaded => {
                 let form = screen.forms.first()?;
-                let input = form.inputs.first()?;
+
+                let values: Vec<(String, String)> = form
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        let label = input.label.clone().unwrap_or_default();
+                        let value = guess_value(&label, input.input_type.as_deref());
+                        (label, value)
+                    })
+                    .collect();
+
+                let submit_label = form
+                    .primary_action
+                    .as_ref()
+                    .or(form.actions.first())
+                    .and_then(|a| a.label.clone());
 
                 (
                     DecisionType::Act,
-                    Some(AgentAction::FillInput {
+                    Some(AgentAction::FillAndSubmitForm {
                         form_id: form.id.clone(),
-                        input_label: input.label.clone().unwrap_or_default(),
-                        value: "test".to_string(),
-                        identity: None,
+                        values,
+                        submit_label,
                     }),
                 )
             }

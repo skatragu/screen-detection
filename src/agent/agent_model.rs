@@ -35,6 +35,11 @@ pub enum AgentAction {
     FormSubmitted {
         form_id: String,
     },
+    FillAndSubmitForm {
+        form_id: String,
+        values: Vec<(String, String)>,     // (input_label, value) pairs
+        submit_label: Option<String>,      // label of the action to click after filling
+    },
     ClickAction {
         label: String,
         identity: Option<String>,
