@@ -26,6 +26,12 @@ pub enum AgentError {
 
     /// Missing required data in screen state
     MissingState(String),
+
+    /// Session I/O failure (stdin/stdout communication with browser_server.js)
+    SessionIO(String),
+
+    /// Session protocol error (unexpected response from browser_server.js)
+    SessionProtocol { command: String, error: String },
 }
 
 impl fmt::Display for AgentError {
@@ -54,6 +60,12 @@ impl fmt::Display for AgentError {
             }
             AgentError::MissingState(msg) => {
                 write!(f, "Missing state: {}", msg)
+            }
+            AgentError::SessionIO(msg) => {
+                write!(f, "Session I/O error: {}", msg)
+            }
+            AgentError::SessionProtocol { command, error } => {
+                write!(f, "Session protocol error on '{}': {}", command, error)
             }
         }
     }

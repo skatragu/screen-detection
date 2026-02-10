@@ -394,3 +394,51 @@ impl ModelBackend for MockBackend {
         DeterministicPolicy.decide(screen, diff, memory)
     }
 }
+
+// ============================================================================
+// Text Inference — generic text-in/text-out LLM interface for PageAnalyzer
+// ============================================================================
+
+/// Generic text inference trait for sending prompts and receiving text responses.
+/// Used by `LlmPageAnalyzer` (and future components) that need free-form LLM output
+/// rather than the structured `ModelDecision` from `ModelBackend`.
+pub trait TextInference {
+    fn infer_text(&self, prompt: &str) -> Option<String>;
+}
+
+impl TextInference for OllamaBackend {
+    fn infer_text(&self, prompt: &str) -> Option<String> {
+        let request = OllamaRequest {
+            model: self.model.clone(),
+            prompt: prompt.to_string(),
+            stream: false,
+            format: "json",
+        };
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(&self.endpoint)
+            .json(&request)
+            .send()
+            .ok()?;
+
+        let ollama_response: OllamaResponse = response.json().ok()?;
+        Some(ollama_response.response)
+    }
+}
+
+/// Mock text inference that returns a canned response. For deterministic testing
+/// of `LlmPageAnalyzer` without a running LLM.
+pub struct MockTextInference {
+    pub response: String,
+}
+
+impl TextInference for MockTextInference {
+    fn infer_text(&self, _prompt: &str) -> Option<String> {
+        if self.response.is_empty() {
+            None
+        } else {
+            Some(self.response.clone())
+        }
+    }
+}

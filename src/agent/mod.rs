@@ -3,3 +3,5 @@ pub mod agent_model;
 pub mod ai_model;
 pub mod budget;
 pub mod error;
+pub mod page_analyzer;
+pub mod page_model;

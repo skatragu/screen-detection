@@ -11,7 +11,10 @@ use crate::{
         ai_model::{DeterministicPolicy, HybridPolicy, ModelPolicy, MockBackend, OllamaBackend},
         error::AgentError,
     },
-    browser::playwright::{BrowserCommand, SelectorHint, execute_browser_action},
+    browser::{
+        playwright::{BrowserCommand, SelectorHint, execute_browser_action},
+        session::BrowserSession,
+    },
     canonical::diff::{SemanticSignal, SemanticStateDiff},
     screen::screen_model::ElementKind,
     state::{identity::IdentifiedElement, state_model::ScreenState},
@@ -348,6 +351,141 @@ pub fn execute_action(action: &AgentAction, state: &ScreenState) -> Result<(), A
                 form_id
             );
             Ok(())
+        }
+
+        AgentAction::NavigateTo { url, reason } => {
+            // NavigateTo is only meaningful in session-based execution.
+            // In subprocess mode, we log it but can't actually navigate.
+            println!("NavigateTo (no-op in subprocess mode): {} — {}", url, reason);
+            Ok(())
+        }
+    }
+}
+
+/// Execute an agent action using a persistent BrowserSession.
+/// Reuses the same helper functions as execute_action() but routes
+/// browser commands through the session instead of spawning subprocesses.
+pub fn execute_action_session(
+    action: &AgentAction,
+    state: &ScreenState,
+    session: &mut BrowserSession,
+) -> Result<(), AgentError> {
+    match action {
+        AgentAction::FillInput {
+            form_id,
+            input_label,
+            value,
+            identity,
+        } => {
+            let target = resolve_target(identity, state)
+                .or_else(|| find_input_by_label(form_id, input_label, state))
+                .ok_or_else(|| AgentError::ElementNotFound {
+                    element: input_label.clone(),
+                    context: format!("form '{}'", form_id),
+                })?;
+
+            println!(
+                "Filling input [{}] '{}' with '{}'",
+                target.id, input_label, value
+            );
+
+            let selector = selector_from_target(target, Some(form_id));
+            session.fill(&selector, value)
+        }
+
+        AgentAction::SubmitForm {
+            form_id,
+            action_label,
+            identity,
+        } => {
+            let target = resolve_target(identity, state)
+                .or_else(|| find_form_action_by_label(form_id, action_label, state))
+                .ok_or_else(|| AgentError::ElementNotFound {
+                    element: action_label.clone(),
+                    context: format!("form '{}'", form_id),
+                })?;
+
+            println!(
+                "Submitting form '{}' via action [{}] '{}'",
+                form_id, target.id, action_label
+            );
+
+            let selector = selector_from_target(target, Some(form_id));
+            session.click(&selector)
+        }
+
+        AgentAction::FillAndSubmitForm {
+            form_id,
+            values,
+            submit_label,
+        } => {
+            // Fill each input sequentially
+            for (input_label, value) in values {
+                let target = find_input_by_label(form_id, input_label, state);
+
+                if let Some(target) = target {
+                    println!(
+                        "Filling input [{}] '{}' with '{}'",
+                        target.id, input_label, value
+                    );
+
+                    let selector = selector_from_target(target, Some(form_id));
+                    session.fill(&selector, value)?;
+                } else {
+                    println!("Warning: input '{}' not found in form '{}', skipping", input_label, form_id);
+                }
+            }
+
+            // Submit if a submit label is provided
+            if let Some(label) = submit_label {
+                let target = find_form_action_by_label(form_id, label, state)
+                    .ok_or_else(|| AgentError::ElementNotFound {
+                        element: label.clone(),
+                        context: format!("form '{}'", form_id),
+                    })?;
+
+                println!(
+                    "Submitting form '{}' via action [{}] '{}'",
+                    form_id, target.id, label
+                );
+
+                let selector = selector_from_target(target, Some(form_id));
+                session.click(&selector)?;
+            }
+
+            Ok(())
+        }
+
+        AgentAction::ClickAction { label, identity } => {
+            let target = resolve_target(identity, state)
+                .or_else(|| find_standalone_action_by_label(label, state))
+                .ok_or_else(|| AgentError::ElementNotFound {
+                    element: label.clone(),
+                    context: "standalone actions".into(),
+                })?;
+
+            println!("Clicking standalone action [{}] '{}'", target.id, label);
+
+            let selector = selector_from_target(target, None);
+            session.click(&selector)
+        }
+
+        AgentAction::Wait { reason } => {
+            println!("Waiting: {}", reason);
+            session.wait_idle(2000)
+        }
+
+        AgentAction::FormSubmitted { form_id } => {
+            println!(
+                "Form '{}' submission confirmed (no execution required)",
+                form_id
+            );
+            Ok(())
+        }
+
+        AgentAction::NavigateTo { url, reason } => {
+            println!("Navigating to {}: {}", url, reason);
+            session.navigate(url)
         }
     }
 }

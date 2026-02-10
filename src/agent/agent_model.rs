@@ -47,6 +47,10 @@ pub enum AgentAction {
     Wait {
         reason: String,
     },
+    NavigateTo {
+        url: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone)]

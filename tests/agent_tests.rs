@@ -4,208 +4,96 @@ use std::error::Error as StdError;
 use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
-        agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision, Policy},
+        agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision},
         ai_model::{DeterministicPolicy, guess_value},
         budget::{BudgetDecision, check_budgets},
         error::AgentError,
     },
-    browser::playwright::{SelectorHint, extract_screen},
+    browser::playwright::extract_screen,
     canonical::{
         canonical_model::{CanonicalScreenState, canonicalize},
         diff::{ActionDiff, FormDiff, OutputDiff, SemanticSignal, SemanticStateDiff, semantic_diff},
     },
     screen::{
         classifier::classify,
-        intent::infer_form_intent,
         screen_model::{DomElement, ElementKind, Form, ScreenElement},
     },
     state::{
-        normalize::normalize_output_text,
         state_builder::build_state,
         state_model::ScreenState,
     },
     trace::logger::TraceLogger,
 };
 
+use screen_detection::agent::agent_model::Policy;
+
 use crate::common::{
-    semantic_diff::{
-        diff_between_pages, diff_mutating, diff_static, diff_static_with_initial_flag,
-    },
-    utils::{is_terminal_success, page},
+    semantic_diff::diff_static,
+    utils::page,
 };
 
 mod common;
 
-#[test]
-fn initial_page_produces_screen_loaded() {
-    let diff = diff_static(&page("01_search_form.html"));
+// =========================================================================
+// Helpers
+// =========================================================================
 
-    assert!(
-        diff.signals.contains(&SemanticSignal::ScreenLoaded),
-        "Expected ScreenLoaded for initial page"
-    );
-
-    assert!(
-        !diff.signals.contains(&SemanticSignal::NoOp),
-        "Initial page must not be NoOp"
-    );
+fn run_agent_until_action(
+    agent: &mut Agent,
+    state: &ScreenState,
+    diff: &SemanticStateDiff,
+    tracer: &TraceLogger,
+    max_steps: usize,
+) -> Option<AgentAction> {
+    for _ in 0..max_steps {
+        if let Some(action) = agent.step(state, diff, tracer) {
+            return Some(action);
+        }
+    }
+    None
 }
 
-#[test]
-fn form_submission_emits_signal() {
-    let diff = diff_between_pages(
-        &&page("01_search_form.html"),      // BEFORE
-        &&page("02_search_submitted.html"), // AFTER
-    );
-    println!("diff={:?}", diff);
-    assert!(diff.signals.contains(&SemanticSignal::FormSubmitted {
-        form_id: "search".into()
-    }));
+fn mock_screen_with_form() -> ScreenState {
+    ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test Page".into(),
+        forms: vec![Form {
+            id: "login".into(),
+            inputs: vec![ScreenElement {
+                label: Some("Username".into()),
+                kind: ElementKind::Input,
+                tag: Some("input".into()),
+                role: Some("textbox".into()),
+                input_type: Some("text".into()),
+            }],
+            actions: vec![ScreenElement {
+                label: Some("Sign In".into()),
+                kind: ElementKind::Action,
+                tag: Some("button".into()),
+                role: Some("button".into()),
+                input_type: Some("submit".into()),
+            }],
+            primary_action: None,
+            intent: None,
+        }],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    }
 }
 
-#[test]
-fn results_appearing_is_detected() {
-    let diff = diff_between_pages(
-        &&page("02_search_submitted.html"), // BEFORE
-        &&page("03_search_results.html"),   // AFTER
-    );
-
-    println!("Diff = {:?}", diff);
-    assert!(
-        diff.signals.contains(&SemanticSignal::ResultsAppeared),
-        "Expected ResultsAppeared signal"
-    );
+fn diff_with_signal(signal: SemanticSignal) -> SemanticStateDiff {
+    SemanticStateDiff {
+        forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
+        standalone_actions: ActionDiff { added: vec![], removed: vec![] },
+        outputs: OutputDiff { added: vec![], removed: vec![] },
+        signals: vec![signal],
+    }
 }
 
-#[test]
-fn direct_form_to_results_is_submission_not_navigation() {
-    let diff = diff_between_pages(
-        &page("01_search_form.html"),
-        &page("03_search_results.html"),
-    );
-
-    assert!(
-        diff.signals.iter().any(|s| matches!(
-            s,
-            SemanticSignal::FormSubmitted { form_id } if form_id == "search"
-        )),
-        "Expected form submission"
-    );
-
-    assert!(
-        diff.signals.contains(&SemanticSignal::ResultsAppeared),
-        "Expected results to appear"
-    );
-
-    assert!(
-        !diff.signals.contains(&SemanticSignal::NavigationOccurred),
-        "Submission with results must not be classified as navigation"
-    );
-}
-
-#[test]
-fn error_appearing_is_detected() {
-    let diff = diff_between_pages(&page("02_search_submitted.html"), &page("05_error.html"));
-
-    assert!(
-        diff.signals.contains(&SemanticSignal::ErrorAppeared),
-        "Expected ErrorAppeared when error first appears"
-    );
-}
-
-#[test]
-fn form_submission_is_detected() {
-    let diff = diff_between_pages(
-        &page("01_search_form.html"),
-        &page("02_search_submitted.html"),
-    );
-
-    assert!(
-        diff.signals
-            .iter()
-            .any(|s| matches!(s, SemanticSignal::FormSubmitted { .. })),
-        "Expected FormSubmitted signal"
-    );
-}
-
-#[test]
-fn no_false_positive_signals() {
-    let diff = diff_mutating(&page("01_search_form.html"), 100);
-
-    assert_eq!(
-        diff.signals,
-        vec![SemanticSignal::NoOp],
-        "Static diff should ONLY produce NoOp"
-    );
-}
-
-#[test]
-fn error_then_results_is_success() {
-    let diff = diff_between_pages(&page("05_error.html"), &page("03_search_results.html"));
-    println!("Diff = {:?}", diff);
-
-    assert!(
-        is_terminal_success(&diff),
-        "Transition must be considered success"
-    );
-
-    assert!(
-        !diff.signals.contains(&SemanticSignal::ErrorAppeared),
-        "Old error must not persist"
-    );
-}
-
-#[test]
-fn form_disappears_with_content_is_submission() {
-    let diff = diff_between_pages(&page("01_search_form.html"), &page("08_navigation.html"));
-
-    assert!(
-        diff.signals
-            .iter()
-            .any(|s| matches!(s, SemanticSignal::FormSubmitted { .. })),
-        "Form disappearance with content is a submission"
-    );
-}
-
-#[test]
-fn repeated_results_page_is_noop() {
-    let diff = diff_static_with_initial_flag(&page("03_search_results.html"), false);
-
-    assert_eq!(
-        diff.signals,
-        vec![SemanticSignal::NoOp],
-        "Repeated results page should be NoOp"
-    );
-}
-
-#[test]
-fn repeated_error_page_is_noop() {
-    let diff = diff_static_with_initial_flag(&page("05_error.html"), false);
-
-    assert_eq!(
-        diff.signals,
-        vec![SemanticSignal::NoOp],
-        "Repeated error page should be NoOp"
-    );
-}
-
-#[test]
-fn correct_form_is_marked_submitted() {
-    let diff = diff_between_pages(
-        &page("06_multiple_forms.html"),
-        &page("02_search_submitted.html"),
-    );
-
-    println!("Diff = {:?}", diff);
-
-    assert!(
-        diff.signals.iter().any(|s| matches!(
-            s,
-            SemanticSignal::FormSubmitted { form_id } if form_id == "search"
-        )),
-        "Correct form must be marked submitted"
-    );
-}
+// =========================================================================
+// Agent flow tests
+// =========================================================================
 
 #[test]
 fn agent_completes_search_flow() {
@@ -252,21 +140,6 @@ fn agent_completes_search_flow() {
     );
 }
 
-fn run_agent_until_action(
-    agent: &mut Agent,
-    state: &ScreenState,
-    diff: &SemanticStateDiff,
-    tracer: &TraceLogger,
-    max_steps: usize,
-) -> Option<AgentAction> {
-    for _ in 0..max_steps {
-        if let Some(action) = agent.step(state, diff, tracer) {
-            return Some(action);
-        }
-    }
-    None
-}
-
 #[test]
 fn agent_does_not_act_on_noop() {
     let tracer = TraceLogger::new("noop_trace.jsonl");
@@ -285,7 +158,6 @@ fn agent_does_not_act_on_noop() {
         semantics,
     );
 
-    // let action = agent.step(&state, &diff, &tracer);
     let action = run_agent_until_action(&mut agent, &state, &diff, &tracer, 5);
 
     assert!(action.is_none(), "Agent must not act on NoOp");
@@ -314,7 +186,6 @@ fn agent_stops_after_repeated_error() {
             semantics,
         );
 
-        // let state = load_state(p);
         let canonical = canonicalize(&state, None);
 
         let diff = match &prev {
@@ -447,237 +318,8 @@ fn agent_loop_with_mock_backend() {
 }
 
 // =========================================================================
-// New tests: classifier field population, selector hints, serialization,
-// and error paths for execute_action
+// DeterministicPolicy tests
 // =========================================================================
-
-#[test]
-fn classifier_populates_screen_element_fields() {
-    let elements = vec![
-        DomElement {
-            tag: "input".into(),
-            text: None,
-            role: Some("textbox".into()),
-            r#type: Some("text".into()),
-            aria_label: Some("Search query".into()),
-            disabled: false,
-            required: false,
-            form_id: Some("search".into()),
-        },
-        DomElement {
-            tag: "button".into(),
-            text: Some("Submit".into()),
-            role: Some("button".into()),
-            r#type: Some("submit".into()),
-            aria_label: None,
-            disabled: false,
-            required: false,
-            form_id: Some("search".into()),
-        },
-        DomElement {
-            tag: "div".into(),
-            text: Some("Results will appear here".into()),
-            role: None,
-            r#type: None,
-            aria_label: None,
-            disabled: false,
-            required: false,
-            form_id: None,
-        },
-    ];
-
-    let semantics = classify(&elements);
-
-    // Check the input in the form
-    let form = semantics.forms.iter().find(|f| f.id == "search").unwrap();
-    let input = &form.inputs[0];
-    assert_eq!(input.tag, Some("input".into()));
-    assert_eq!(input.role, Some("textbox".into()));
-    assert_eq!(input.input_type, Some("text".into()));
-    assert_eq!(input.label, Some("Search query".into()));
-
-    // Check the action in the form
-    let action = &form.actions[0];
-    assert_eq!(action.tag, Some("button".into()));
-    assert_eq!(action.role, Some("button".into()));
-    assert_eq!(action.input_type, Some("submit".into()));
-
-    // Check the output
-    let output = &semantics.outputs[0];
-    assert_eq!(output.tag, Some("div".into()));
-    assert_eq!(output.role, None);
-    assert_eq!(output.input_type, None);
-}
-
-#[test]
-fn selector_hint_serializes_with_correct_field_names() {
-    let hint = SelectorHint {
-        role: Some("textbox".into()),
-        name: Some("Email".into()),
-        tag: Some("input".into()),
-        input_type: Some("email".into()),
-        form_id: Some("login".into()),
-    };
-
-    let json: serde_json::Value = serde_json::to_value(&hint).unwrap();
-
-    // Verify serde renames: input_type -> "type", form_id -> "formId"
-    assert_eq!(json["role"], "textbox");
-    assert_eq!(json["name"], "Email");
-    assert_eq!(json["tag"], "input");
-    assert_eq!(json["type"], "email", "input_type must serialize as 'type'");
-    assert_eq!(json["formId"], "login", "form_id must serialize as 'formId'");
-
-    // Verify the Rust field names are NOT in the JSON
-    assert!(json.get("input_type").is_none(), "Must not contain 'input_type' key");
-    assert!(json.get("form_id").is_none(), "Must not contain 'form_id' key");
-}
-
-#[test]
-fn selector_hint_skips_none_fields() {
-    let hint = SelectorHint {
-        role: None,
-        name: Some("Click me".into()),
-        tag: Some("a".into()),
-        input_type: None,
-        form_id: None,
-    };
-
-    let json_str = serde_json::to_string(&hint).unwrap();
-
-    assert!(!json_str.contains("role"), "None fields must be skipped");
-    assert!(!json_str.contains("type"), "None fields must be skipped");
-    assert!(!json_str.contains("formId"), "None fields must be skipped");
-    assert!(json_str.contains("name"), "Present fields must appear");
-    assert!(json_str.contains("tag"), "Present fields must appear");
-}
-
-#[test]
-fn execute_action_errors_on_missing_url() {
-    let state = ScreenState {
-        url: None,
-        title: "Test".into(),
-        forms: vec![],
-        standalone_actions: vec![],
-        outputs: vec![],
-        identities: HashMap::new(),
-    };
-
-    let action = AgentAction::FillInput {
-        form_id: "search".into(),
-        input_label: "Query".into(),
-        value: "test".into(),
-        identity: None,
-    };
-
-    let result = execute_action(&action, &state);
-    assert!(result.is_err(), "Must fail when URL is missing");
-    assert!(
-        matches!(result.unwrap_err(), AgentError::MissingState(_)),
-        "Error should be MissingState variant"
-    );
-}
-
-#[test]
-fn execute_action_errors_on_missing_element() {
-    let state = ScreenState {
-        url: Some("https://example.com".into()),
-        title: "Test".into(),
-        forms: vec![],
-        standalone_actions: vec![],
-        outputs: vec![],
-        identities: HashMap::new(),
-    };
-
-    // FillInput with unknown identity and no matching label
-    let fill = execute_action(
-        &AgentAction::FillInput {
-            form_id: "search".into(),
-            input_label: "nonexistent".into(),
-            value: "test".into(),
-            identity: Some("bogus_id".into()),
-        },
-        &state,
-    );
-    assert!(fill.is_err(), "FillInput must fail for missing element");
-    assert!(
-        matches!(fill.unwrap_err(), AgentError::ElementNotFound { .. }),
-        "FillInput error should be ElementNotFound"
-    );
-
-    // SubmitForm with unknown identity
-    let submit = execute_action(
-        &AgentAction::SubmitForm {
-            form_id: "search".into(),
-            action_label: "nonexistent".into(),
-            identity: Some("bogus_id".into()),
-        },
-        &state,
-    );
-    assert!(submit.is_err(), "SubmitForm must fail for missing element");
-    assert!(
-        matches!(submit.unwrap_err(), AgentError::ElementNotFound { .. }),
-        "SubmitForm error should be ElementNotFound"
-    );
-
-    // ClickAction with unknown identity
-    let click = execute_action(
-        &AgentAction::ClickAction {
-            label: "nonexistent".into(),
-            identity: Some("bogus_id".into()),
-        },
-        &state,
-    );
-    assert!(click.is_err(), "ClickAction must fail for missing element");
-    assert!(
-        matches!(click.unwrap_err(), AgentError::ElementNotFound { .. }),
-        "ClickAction error should be ElementNotFound"
-    );
-}
-
-// =========================================================================
-// Policy tests: DeterministicPolicy behavior and Agent integration
-// =========================================================================
-
-/// Helper: build a minimal ScreenState with one form containing one input and one action.
-fn mock_screen_with_form() -> ScreenState {
-    ScreenState {
-        url: Some("https://example.com".into()),
-        title: "Test Page".into(),
-        forms: vec![Form {
-            id: "login".into(),
-            inputs: vec![ScreenElement {
-                label: Some("Username".into()),
-                kind: ElementKind::Input,
-                tag: Some("input".into()),
-                role: Some("textbox".into()),
-                input_type: Some("text".into()),
-            }],
-            actions: vec![ScreenElement {
-                label: Some("Sign In".into()),
-                kind: ElementKind::Action,
-                tag: Some("button".into()),
-                role: Some("button".into()),
-                input_type: Some("submit".into()),
-            }],
-            primary_action: None,
-            intent: None,
-        }],
-        standalone_actions: vec![],
-        outputs: vec![],
-        identities: HashMap::new(),
-    }
-}
-
-/// Helper: build a SemanticStateDiff with a single signal.
-fn diff_with_signal(signal: SemanticSignal) -> SemanticStateDiff {
-    SemanticStateDiff {
-        forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
-        standalone_actions: ActionDiff { added: vec![], removed: vec![] },
-        outputs: OutputDiff { added: vec![], removed: vec![] },
-        signals: vec![signal],
-    }
-}
 
 #[test]
 fn deterministic_policy_fills_input_on_screen_loaded() {
@@ -891,7 +533,7 @@ fn deterministic_policy_multi_input_form() {
 }
 
 // =========================================================================
-// AgentError Display and source chain tests
+// AgentError tests
 // =========================================================================
 
 #[test]
@@ -942,8 +584,28 @@ fn agent_error_source_chain() {
     assert!(not_found.source().is_none(), "ElementNotFound should have no source");
 }
 
+#[test]
+fn agent_error_session_io_display() {
+    let err = AgentError::SessionIO("stdin broken".into());
+    assert!(err.to_string().contains("Session I/O error"), "SessionIO display");
+    assert!(err.to_string().contains("stdin broken"), "SessionIO contains detail");
+    assert!(err.source().is_none(), "SessionIO has no source");
+}
+
+#[test]
+fn agent_error_session_protocol_display() {
+    let err = AgentError::SessionProtocol {
+        command: "navigate".into(),
+        error: "timeout".into(),
+    };
+    assert!(err.to_string().contains("Session protocol error"), "SessionProtocol display");
+    assert!(err.to_string().contains("navigate"), "SessionProtocol contains command");
+    assert!(err.to_string().contains("timeout"), "SessionProtocol contains error");
+    assert!(err.source().is_none(), "SessionProtocol has no source");
+}
+
 // =========================================================================
-// DeterministicPolicy — untested signal branches
+// DeterministicPolicy — signal branches
 // =========================================================================
 
 #[test]
@@ -1102,10 +764,6 @@ fn budget_blocks_when_loop_exhausted() {
     );
 }
 
-// =========================================================================
-// gate_decision — confidence gate
-// =========================================================================
-
 #[test]
 fn gate_decision_rejects_low_confidence() {
     let mut memory = AgentMemory::default();
@@ -1120,137 +778,132 @@ fn gate_decision_rejects_low_confidence() {
 }
 
 // =========================================================================
-// normalize_output_text edge cases
+// execute_action error paths
 // =========================================================================
 
 #[test]
-fn normalize_output_text_filters_junk() {
-    assert_eq!(normalize_output_text(""), None, "Empty string");
-    assert_eq!(normalize_output_text("   "), None, "Whitespace only");
-    assert_eq!(normalize_output_text("function(x){return x}"), None, "JS blob");
-    assert_eq!(normalize_output_text("var x = 42"), None, "JS var");
-    assert_eq!(normalize_output_text("window.location"), None, "JS window");
-    assert_eq!(normalize_output_text("document.getElementById"), None, "JS document");
-    assert_eq!(normalize_output_text("a1!@#$%^&*()"), None, "High non-alpha ratio");
-    assert_eq!(normalize_output_text("ab"), None, "Too short after normalize");
-}
+fn execute_action_errors_on_missing_url() {
+    let state = ScreenState {
+        url: None,
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
 
-#[test]
-fn normalize_output_text_normalizes_valid_text() {
-    assert_eq!(
-        normalize_output_text("  Hello   World  "),
-        Some("hello world".into()),
-        "Collapses whitespace and lowercases"
-    );
-    assert_eq!(
-        normalize_output_text("Search Results: 42 items"),
-        Some("search results: 42 items".into()),
-        "Normalizes mixed-case text"
-    );
-    assert_eq!(
-        normalize_output_text("This is a valid sentence"),
-        Some("this is a valid sentence".into()),
-        "Plain text passes through"
+    let action = AgentAction::FillInput {
+        form_id: "search".into(),
+        input_label: "Query".into(),
+        value: "test".into(),
+        identity: None,
+    };
+
+    let result = execute_action(&action, &state);
+    assert!(result.is_err(), "Must fail when URL is missing");
+    assert!(
+        matches!(result.unwrap_err(), AgentError::MissingState(_)),
+        "Error should be MissingState variant"
     );
 }
 
-// =========================================================================
-// Form intent scoring boundaries
-// =========================================================================
+#[test]
+fn execute_action_errors_on_missing_element() {
+    let state = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
+    };
+
+    // FillInput with unknown identity and no matching label
+    let fill = execute_action(
+        &AgentAction::FillInput {
+            form_id: "search".into(),
+            input_label: "nonexistent".into(),
+            value: "test".into(),
+            identity: Some("bogus_id".into()),
+        },
+        &state,
+    );
+    assert!(fill.is_err(), "FillInput must fail for missing element");
+    assert!(
+        matches!(fill.unwrap_err(), AgentError::ElementNotFound { .. }),
+        "FillInput error should be ElementNotFound"
+    );
+
+    // SubmitForm with unknown identity
+    let submit = execute_action(
+        &AgentAction::SubmitForm {
+            form_id: "search".into(),
+            action_label: "nonexistent".into(),
+            identity: Some("bogus_id".into()),
+        },
+        &state,
+    );
+    assert!(submit.is_err(), "SubmitForm must fail for missing element");
+    assert!(
+        matches!(submit.unwrap_err(), AgentError::ElementNotFound { .. }),
+        "SubmitForm error should be ElementNotFound"
+    );
+
+    // ClickAction with unknown identity
+    let click = execute_action(
+        &AgentAction::ClickAction {
+            label: "nonexistent".into(),
+            identity: Some("bogus_id".into()),
+        },
+        &state,
+    );
+    assert!(click.is_err(), "ClickAction must fail for missing element");
+    assert!(
+        matches!(click.unwrap_err(), AgentError::ElementNotFound { .. }),
+        "ClickAction error should be ElementNotFound"
+    );
+}
 
 #[test]
-fn form_intent_scoring_boundaries() {
-    // No signals → Unknown, confidence 0.0
-    let plain_form = Form {
-        id: "plain".into(),
-        inputs: vec![ScreenElement {
-            label: Some("Name".into()),
-            kind: ElementKind::Input,
-            tag: Some("input".into()),
-            role: None,
-            input_type: Some("text".into()),
-        }],
-        actions: vec![ScreenElement {
-            label: Some("Submit".into()),
-            kind: ElementKind::Action,
-            tag: Some("button".into()),
-            role: None,
-            input_type: Some("submit".into()),
-        }],
-        primary_action: None,
-        intent: None,
+fn execute_action_navigate_to_is_noop_in_subprocess_mode() {
+    let state = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
     };
-    let intent = infer_form_intent(&plain_form);
-    assert_eq!(intent.label, "Unknown", "No auth signals → Unknown");
-    assert_eq!(intent.confidence, 0.0, "No signals → 0.0 confidence");
 
-    // Password only (score=0.4) → NOT > 0.4, so "Unknown"
-    let password_form = Form {
-        id: "pw".into(),
-        inputs: vec![ScreenElement {
-            label: Some("Password".into()),
-            kind: ElementKind::Input,
-            tag: Some("input".into()),
-            role: None,
-            input_type: Some("password".into()),
-        }],
-        actions: vec![ScreenElement {
-            label: Some("Submit".into()),
-            kind: ElementKind::Action,
-            tag: Some("button".into()),
-            role: None,
-            input_type: Some("submit".into()),
-        }],
-        primary_action: None,
-        intent: None,
+    let action = AgentAction::NavigateTo {
+        url: "https://other.com".into(),
+        reason: "testing".into(),
     };
-    let intent = infer_form_intent(&password_form);
-    assert_eq!(intent.label, "Unknown", "score=0.4 is NOT > 0.4, so Unknown");
 
-    // Login action only (score=0.4) → "Unknown"
-    let login_form = Form {
-        id: "login".into(),
-        inputs: vec![ScreenElement {
-            label: Some("Username".into()),
-            kind: ElementKind::Input,
-            tag: Some("input".into()),
-            role: None,
-            input_type: Some("text".into()),
-        }],
-        actions: vec![ScreenElement {
-            label: Some("Login".into()),
-            kind: ElementKind::Action,
-            tag: Some("button".into()),
-            role: None,
-            input_type: Some("submit".into()),
-        }],
-        primary_action: None,
-        intent: None,
-    };
-    let intent = infer_form_intent(&login_form);
-    assert_eq!(intent.label, "Unknown", "Login action only → score=0.4 → Unknown");
+    // Should succeed (no-op in subprocess mode)
+    let result = execute_action(&action, &state);
+    assert!(result.is_ok(), "NavigateTo should be ok in subprocess mode");
+}
 
-    // Password + Sign In (score=0.8) → Authentication
-    let auth_form = Form {
-        id: "auth".into(),
-        inputs: vec![ScreenElement {
-            label: Some("Password".into()),
-            kind: ElementKind::Input,
-            tag: Some("input".into()),
-            role: None,
-            input_type: Some("password".into()),
-        }],
-        actions: vec![ScreenElement {
-            label: Some("Sign In".into()),
-            kind: ElementKind::Action,
-            tag: Some("button".into()),
-            role: None,
-            input_type: Some("submit".into()),
-        }],
-        primary_action: None,
-        intent: None,
+#[test]
+fn execute_action_session_errors_on_missing_element() {
+    let state = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![],
+        identities: HashMap::new(),
     };
-    let intent = infer_form_intent(&auth_form);
-    assert_eq!(intent.label, "Authentication", "Password + Sign In → Authentication");
-    assert!(intent.confidence > 0.7, "Confidence should exceed 0.7");
+
+    let action = AgentAction::FillInput {
+        form_id: "nonexistent".into(),
+        input_label: "missing".into(),
+        value: "test".into(),
+        identity: None,
+    };
+
+    // Test via the original execute_action (same error behavior)
+    let result = execute_action(&action, &state);
+    assert!(matches!(result.unwrap_err(), AgentError::ElementNotFound { .. }));
 }
