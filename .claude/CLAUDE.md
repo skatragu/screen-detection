@@ -26,6 +26,7 @@ Raw DOM (JSON from Playwright/Node.js)
 | `canonical` | `canonical_model.rs`, `diff.rs` | Canonicalizes state into BTreeMap; derives semantic signals from diffs |
 | `agent` | `agent.rs`, `agent_model.rs`, `ai_model.rs`, `budget.rs`, `error.rs`, `page_model.rs`, `page_analyzer.rs` | State machine (Observe->Evaluate->Think->Act->Stop); multi-layer gating; pluggable LLM backends with `DeterministicPolicy` and `HybridPolicy`; typed `AgentError` enum; both subprocess and session execution; AI page understanding via `PageAnalyzer` trait |
 | `spec` | `spec_model.rs`, `context.rs`, `runner.rs` | Test spec data model (TestSpec, TestStep, AssertionSpec); TestRunner executes specs via BrowserSession; TestContext tracks assertion results |
+| `explorer` | `app_map.rs`, `explorer.rs`, `test_generator.rs` | Autonomous exploration and test generation; AppMap page graph (PageNode, Transition); BFS multi-page crawling via BrowserSession; TestSpec generation from PageModel (smoke + form tests) |
 | `trace` | `trace.rs`, `logger.rs` | JSONL trace logging with builder-pattern TraceEvent |
 
 ## Key Design Decisions
@@ -41,6 +42,8 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Dual browser modes**: Subprocess mode (`execute_action` via interact.js, fresh browser per action) for backward compatibility; Session mode (`execute_action_session` via `BrowserSession`/browser_server.js, persistent browser) for multi-page flows.
 - **NDJSON session protocol**: `BrowserSession` communicates with `browser_server.js` via newline-delimited JSON over stdin/stdout. Commands: navigate, extract, action (fill/click/wait), screenshot, current_url, query_text, query_visible, query_count, quit.
 - **CSS selector queries**: Element assertions (ElementText, ElementVisible, ElementCount) use raw CSS selectors (`#id`, `.class`, `tag`) via browser query commands, separate from the semantic `SelectorHint` used for agent interactions.
+- **Autonomous exploration**: `ExplorerConfig` controls BFS crawling (max_pages, max_depth, same_origin_only). `explore()` for offline single-page analysis, `explore_live()` for multi-page BFS via `BrowserSession`. Builds `AppMap` graph of `PageNode`s + `Transition`s.
+- **Test generation**: `generate_test_plan(app_map)` produces `Vec<TestSpec>` from explored pages. Per page: smoke test (wait + assert suggested_assertions) + per-form test (fill_and_submit with AI-suggested values). `map_suggested_assertion()` bridges `SuggestedAssertion` → `AssertionSpec`.
 
 ## Constants
 
@@ -65,10 +68,11 @@ cargo test
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 96 integration tests split across module-based test files:
+- 111 integration tests split across module-based test files:
   - `tests/agent_tests.rs` (30) — agent behavior, policy logic, guess_value heuristics, budget gating, error handling
   - `tests/browser_tests.rs` (24) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
+  - `tests/explorer_tests.rs` (15) — ExplorerConfig, AppMap data model, explore() offline, test generation (smoke/form), map_suggested_assertion, is_same_origin, resolve_url
   - `tests/page_model_tests.rs` (12) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer, LlmPageAnalyzer with mock/fallback, field classification, navigation targets
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
   - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
@@ -114,6 +118,10 @@ cargo test
 - `PageAnalyzer` trait: `analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError>` — pluggable page analysis
 - `TextInference` trait: `infer_text(&self, prompt: &str) -> Option<String>` — generic text-in/text-out LLM interface
 - `MockTextInference`: canned response for deterministic testing of LlmPageAnalyzer
+- `ExplorerConfig`: start_url, max_pages (10), max_depth (3), same_origin_only (true) — controls autonomous BFS crawling
+- `PageNode`: url, title, depth, page_model (PageModel) — single discovered page in the AppMap
+- `Transition`: from_url, to_url, label — directed edge between pages
+- `AppMap`: pages (HashMap<String, PageNode>), transitions (Vec<Transition>) — graph of discovered pages; has add_page(), add_transition(), page_count(), has_page()
 
 ## File Layout
 
@@ -150,6 +158,11 @@ src/
     identity.rs       -- IdentifiedElement, form_key(), element_key()
     diff.rs           -- StateDiff (added/removed/unchanged)
     normalize.rs      -- Text normalization, region inference (OutputRegion), volatility detection
+  explorer/
+    mod.rs            -- Module exports
+    app_map.rs        -- ExplorerConfig, PageNode, Transition, AppMap (page graph data model)
+    explorer.rs       -- explore() (offline single-page), explore_live() (BFS multi-page via BrowserSession), is_same_origin(), resolve_url()
+    test_generator.rs -- generate_test_plan(), generate_smoke_test(), generate_form_test(), map_suggested_assertion()
   spec/
     mod.rs            -- Module exports
     spec_model.rs     -- TestSpec, TestStep, AssertionSpec, AssertionResult, TestResult
@@ -163,6 +176,7 @@ tests/
   agent_tests.rs      -- 30 tests: agent behavior, policy, guess_value, budget, errors
   browser_tests.rs    -- 24 tests: BrowserRequest/Response serde, session errors, query protocol
   canonical_tests.rs  -- 12 tests: classification, diffing, signals
+  explorer_tests.rs   -- 15 tests: ExplorerConfig, AppMap, explore(), test generation, assertion mapping, URL utilities
   page_model_tests.rs -- 12 tests: PageModel serde, MockPageAnalyzer, LlmPageAnalyzer, field classification
   spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
   state_tests.rs      -- 3 tests: normalize, form intent scoring
