@@ -36,7 +36,7 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Signal-based semantics**: Low-level diffs are converted to high-level signals (`ScreenLoaded`, `FormSubmitted`, `ResultsAppeared`, `ErrorAppeared`, `NavigationOccurred`, `NoOp`) that drive agent decisions.
 - **Multi-layer gating**: Agent actions must pass confidence threshold (0.65), loop suppression (max 2 repeats), budget checks (5 think / 3 retry / 2 loop), and terminal-success gates before execution. Loop budget resets to 5 on signal detection.
 - **Pluggable inference**: `ModelBackend` trait with `OllamaBackend` (qwen2.5:1.5b at localhost:11434), `MockBackend` (deterministic, for tests), plus `DeterministicPolicy` (rule-based with `guess_value()` heuristics) and `HybridPolicy` (combines deterministic + model). Agent uses `Box<dyn Policy>` and can be constructed with `Agent::with_deterministic()`, `Agent::with_hybrid()`, `Agent::with_mock()`, `Agent::with_policy()`.
-- **AI page understanding**: `PageAnalyzer` trait with `MockPageAnalyzer` (rule-based) and `LlmPageAnalyzer` (LLM-backed via `TextInference` trait). Analyzes `ScreenState` → `PageModel` with page category, form field classification, suggested test values, suggested assertions, and navigation targets. `LlmPageAnalyzer` falls back to `MockPageAnalyzer` on parse failure.
+- **AI page understanding (hybrid enrichment)**: `PageAnalyzer` trait with `MockPageAnalyzer` (rule-based) and `LlmPageAnalyzer` (LLM-backed via `TextInference` trait). `LlmPageAnalyzer` uses a simplified prompt (~120 words) asking for only `purpose` and `category`, then builds the full `PageModel` deterministically via `MockPageAnalyzer`. LLM output is parsed via `try_parse_llm_response()` with 4-stage JSON recovery (direct parse → strip markdown fences → fix trailing commas → extract JSON substring). Category strings are normalized via `map_llm_category()` (case-insensitive with aliases). Never fails — always produces a valid `PageModel`.
 - **Field type classification**: `classify_field_type(input_type, label)` maps HTML input types and label keywords to semantic `FieldType` (Email, Password, Number, Date, Tel, Url, Checkbox, Radio, Select, Text). Used by `MockPageAnalyzer` to enrich form analysis.
 - **Smart form filling**: `guess_value(label, input_type)` derives sensible values from input labels (email → `user@example.com`, password → `TestPass123!`, search/query → `test query`, etc.) with fallback to input_type and final fallback `"test"`. `DeterministicPolicy` uses `FillAndSubmitForm` to fill all inputs + submit in one agent step.
 - **Agent state machine**: Deterministic progression Observe -> Evaluate -> Think -> Act -> (back to Observe or Stop).
@@ -54,18 +54,21 @@ Raw DOM (JSON from Playwright/Node.js)
 - `MAX_THINK_STEPS`: 5
 - `MAX_RETRIES`: 3
 - `MAX_LOOP_REPEATS`: 2
-- Ollama model: `qwen2.5:1.5b` at `http://localhost:11434/api/generate`
+- Ollama model: `qwen2.5:1.5b` at `http://localhost:11434/api/generate` (configurable via `OLLAMA_MODEL` and `OLLAMA_ENDPOINT` env vars)
+- Ollama generation params: `temperature: 0.1`, `top_p: 0.9`, `top_k: 40` (optimized for JSON output from small models)
 - `MAX_ITERATIONS`: 20 (agent loop safety limit in run_app)
 - Form intent thresholds: >0.7 = Authentication, >0.4 = User Input
 - `TARGET_URL` env var: overrides default URL (google.com) for run_app/run_app_session
+- `OLLAMA_ENDPOINT` env var: overrides Ollama API endpoint (default: `http://localhost:11434/api/generate`)
+- `OLLAMA_MODEL` env var: overrides Ollama model name (default: `qwen2.5:1.5b`)
 
 ## Build & Test
 
 ```bash
 cargo build
-cargo test                       # 141 offline tests (fast, no browser needed)
-cargo test -- --ignored          # 23 integration tests (requires Node.js + Playwright)
-cargo test -- --include-ignored  # all 164 tests
+cargo test                       # 159 offline tests (fast, no browser needed)
+cargo test -- --ignored          # 28 integration tests (requires Node.js + Playwright; 5 LLM tests need Ollama)
+cargo test -- --include-ignored  # all 187 tests
 ```
 
 - Rust edition 2024
@@ -73,18 +76,18 @@ cargo test -- --include-ignored  # all 164 tests
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 164 tests total: 141 offline + 23 integration (real browser via `#[ignore]`)
-- 141 offline tests split across module-based test files:
+- 187 tests total: 159 offline + 28 integration (real browser via `#[ignore]`)
+- 159 offline tests split across module-based test files:
   - `tests/agent_tests.rs` (30) — agent behavior, policy logic, guess_value heuristics, budget gating, error handling
   - `tests/browser_tests.rs` (24) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
   - `tests/explorer_tests.rs` (30) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url
-  - `tests/page_model_tests.rs` (12) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer, LlmPageAnalyzer with mock/fallback, field classification, navigation targets
+  - `tests/page_model_tests.rs` (30) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer, LlmPageAnalyzer hybrid enrichment, JSON recovery (try_parse), category mapping, prompt construction, field classification, navigation targets
   - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
   - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
-- 19 integration tests (real browser, `#[ignore]`):
-  - `tests/integration_tests.rs` (23) — session lifecycle, DOM pipeline, queries, form interaction, TestRunner, navigation, canonical pipeline, form-aware exploration, flow detection
+- 28 integration tests (real browser, `#[ignore]`):
+  - `tests/integration_tests.rs` (28) — session lifecycle, DOM pipeline, queries, form interaction, TestRunner, navigation, canonical pipeline, form-aware exploration, flow detection, LLM page analysis (5 tests, requires Ollama)
 
 ## External Dependencies
 
@@ -127,6 +130,7 @@ cargo test -- --include-ignored  # all 164 tests
 - `PageAnalyzer` trait: `analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError>` — pluggable page analysis
 - `TextInference` trait: `infer_text(&self, prompt: &str) -> Option<String>` — generic text-in/text-out LLM interface
 - `MockTextInference`: canned response for deterministic testing of LlmPageAnalyzer
+- `LlmPageResponse`: purpose (Option), category (Option) — lightweight struct for parsing LLM output; used by `try_parse_llm_response()`
 - `ExplorerConfig`: start_url, max_pages (10), max_depth (3), same_origin_only (true), explore_forms (true), max_forms_per_page (3) — controls autonomous BFS crawling with form-aware exploration
 - `PageNode`: url, title, depth, page_model (PageModel) — single discovered page in the AppMap
 - `TransitionKind`: Link | FormSubmission { form_id, values } — how a page transition was triggered; defaults to Link via serde
@@ -146,11 +150,11 @@ src/
     mod.rs            -- Module exports
     agent.rs          -- State machine, gating, execute_action(), execute_action_session(), emit_observed_actions()
     agent_model.rs    -- AgentState, AgentAction (incl. FillAndSubmitForm, NavigateTo), AgentMemory, ModelDecision, Policy trait
-    ai_model.rs       -- OllamaBackend, MockBackend, DeterministicPolicy, HybridPolicy, guess_value(), prompt construction, TextInference trait, MockTextInference
+    ai_model.rs       -- OllamaBackend (env-var config, temperature/top_p/top_k), MockBackend, DeterministicPolicy, HybridPolicy, guess_value(), prompt construction, TextInference trait, MockTextInference
     budget.rs         -- Budget check (think/retry/loop)
     error.rs          -- AgentError enum (10 variants), Display, std::error::Error impls
     page_model.rs     -- PageModel, PageCategory, FormModel, FieldModel, FieldType, OutputModel, SuggestedAssertion, NavigationTarget
-    page_analyzer.rs  -- PageAnalyzer trait, MockPageAnalyzer (rule-based), LlmPageAnalyzer (LLM-backed with fallback), classify_field_type()
+    page_analyzer.rs  -- PageAnalyzer trait, MockPageAnalyzer (rule-based), LlmPageAnalyzer (hybrid enrichment: LLM purpose+category + deterministic details), LlmPageResponse, try_parse_llm_response() (4-stage JSON recovery), map_llm_category(), classify_field_type()
   browser/
     mod.rs            -- Module exports
     playwright.rs     -- DOM extraction (returns Result), SelectorHint, BrowserCommand, BrowserResult, execute_browser_action()
@@ -197,11 +201,11 @@ tests/
   browser_tests.rs    -- 24 tests: BrowserRequest/Response serde, session errors, query protocol
   canonical_tests.rs  -- 12 tests: classification, diffing, signals
   explorer_tests.rs   -- 30 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow), URL utilities
-  page_model_tests.rs -- 12 tests: PageModel serde, MockPageAnalyzer, LlmPageAnalyzer, field classification
+  page_model_tests.rs -- 30 tests: PageModel serde, MockPageAnalyzer, LlmPageAnalyzer hybrid enrichment, JSON recovery, category mapping, prompt construction, field classification
   report_tests.rs     -- 15 tests: TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
   state_tests.rs      -- 3 tests: normalize, form intent scoring
-  integration_tests.rs -- 23 tests (real browser, #[ignore]): session, DOM, queries, forms, runner, nav, canonical, form-aware exploration, flow detection
+  integration_tests.rs -- 28 tests (real browser, #[ignore]): session, DOM, queries, forms, runner, nav, canonical, form-aware exploration, flow detection, LLM page analysis
   common/
     mod.rs            -- Module exports
     utils.rs          -- page() helper, is_terminal_success()

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use screen_detection::agent::page_analyzer::{
-    classify_field_type, LlmPageAnalyzer, MockPageAnalyzer, PageAnalyzer,
+    classify_field_type, map_llm_category, try_parse_llm_response, LlmPageAnalyzer,
+    MockPageAnalyzer, PageAnalyzer,
 };
 use screen_detection::agent::page_model::{
     FieldModel, FieldType, FormModel, NavigationTarget, OutputModel, PageCategory, PageModel,
@@ -320,43 +321,35 @@ fn mock_analyzer_empty_page() {
 }
 
 // ============================================================================
-// 8. LlmPageAnalyzer: valid JSON response → correct PageModel
+// 8. LlmPageAnalyzer: valid JSON response → hybrid enrichment
 // ============================================================================
 
 #[test]
 fn llm_analyzer_valid_response() {
-    let valid_json = r#"{
-        "purpose": "Login page",
-        "category": "Login",
-        "forms": [{
-            "form_id": "login",
-            "purpose": "User authentication",
-            "fields": [{
-                "label": "Email",
-                "field_type": "Email",
-                "required": true,
-                "suggested_test_value": "ai@test.com"
-            }],
-            "submit_label": "Log In"
-        }],
-        "outputs": [],
-        "suggested_assertions": [{
-            "assertion_type": "title_contains",
-            "expected": "Login",
-            "description": "Page should have Login in title"
-        }],
-        "navigation_targets": []
-    }"#;
+    // Under hybrid enrichment, LLM only provides purpose + category
+    let valid_json = r#"{"purpose":"User authentication portal","category":"Login"}"#;
 
     let analyzer = LlmPageAnalyzer::with_mock_response(valid_json);
     let screen = login_screen();
     let model = analyzer.analyze(&screen).unwrap();
 
-    assert_eq!(model.purpose, "Login page");
+    // LLM-provided values override defaults
+    assert_eq!(model.purpose, "User authentication portal");
     assert_eq!(model.category, PageCategory::Login);
+
+    // Form details come from deterministic MockPageAnalyzer
     assert_eq!(model.forms.len(), 1);
-    assert_eq!(model.forms[0].fields[0].suggested_test_value, "ai@test.com");
-    assert_eq!(model.suggested_assertions.len(), 1);
+    assert_eq!(model.forms[0].form_id, "login");
+    assert_eq!(model.forms[0].fields[0].label, "Email");
+    assert_eq!(model.forms[0].fields[0].field_type, FieldType::Email);
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "user@example.com"); // from guess_value()
+    assert_eq!(model.forms[0].fields[1].label, "Password");
+    assert_eq!(model.forms[0].fields[1].field_type, FieldType::Password);
+    assert_eq!(model.forms[0].submit_label, Some("Sign In".into()));
+
+    // Assertions and nav targets come from deterministic rules
+    assert!(!model.suggested_assertions.is_empty());
+    assert_eq!(model.navigation_targets.len(), 2);
 }
 
 // ============================================================================
@@ -459,4 +452,288 @@ fn navigation_targets_from_actions() {
     assert!(model.navigation_targets[1]
         .likely_destination
         .contains("Forgot Password"));
+}
+
+// ============================================================================
+// 13. JSON recovery: valid JSON
+// ============================================================================
+
+#[test]
+fn try_parse_valid_json() {
+    let result = try_parse_llm_response(r#"{"purpose":"Login page","category":"Login"}"#);
+    let parsed = result.unwrap();
+    assert_eq!(parsed.purpose.unwrap(), "Login page");
+    assert_eq!(parsed.category.unwrap(), "Login");
+}
+
+// ============================================================================
+// 14. JSON recovery: markdown code fences
+// ============================================================================
+
+#[test]
+fn try_parse_markdown_fences() {
+    let input = "```json\n{\"purpose\":\"Search\",\"category\":\"Search\"}\n```";
+    let result = try_parse_llm_response(input);
+    let parsed = result.unwrap();
+    assert_eq!(parsed.purpose.unwrap(), "Search");
+    assert_eq!(parsed.category.unwrap(), "Search");
+}
+
+// ============================================================================
+// 15. JSON recovery: trailing comma
+// ============================================================================
+
+#[test]
+fn try_parse_trailing_comma() {
+    let input = r#"{"purpose":"Dashboard","category":"Dashboard",}"#;
+    let result = try_parse_llm_response(input);
+    let parsed = result.unwrap();
+    assert_eq!(parsed.purpose.unwrap(), "Dashboard");
+    assert_eq!(parsed.category.unwrap(), "Dashboard");
+}
+
+// ============================================================================
+// 16. JSON recovery: preamble text before JSON
+// ============================================================================
+
+#[test]
+fn try_parse_preamble_text() {
+    let input = "Here is the analysis:\n{\"purpose\":\"Error page\",\"category\":\"Error\"}";
+    let result = try_parse_llm_response(input);
+    let parsed = result.unwrap();
+    assert_eq!(parsed.purpose.unwrap(), "Error page");
+    assert_eq!(parsed.category.unwrap(), "Error");
+}
+
+// ============================================================================
+// 17. JSON recovery: partial fields (only purpose, no category)
+// ============================================================================
+
+#[test]
+fn try_parse_partial_fields() {
+    let input = r#"{"purpose":"Some page"}"#;
+    let result = try_parse_llm_response(input);
+    let parsed = result.unwrap();
+    assert_eq!(parsed.purpose.unwrap(), "Some page");
+    assert!(parsed.category.is_none());
+}
+
+// ============================================================================
+// 18. JSON recovery: garbage input
+// ============================================================================
+
+#[test]
+fn try_parse_garbage() {
+    let result = try_parse_llm_response("this is not json at all");
+    assert!(result.is_none());
+}
+
+// ============================================================================
+// 19. Category mapping: standard values
+// ============================================================================
+
+#[test]
+fn map_category_standard() {
+    assert_eq!(map_llm_category("Login"), PageCategory::Login);
+    assert_eq!(map_llm_category("Search"), PageCategory::Search);
+    assert_eq!(map_llm_category("Dashboard"), PageCategory::Dashboard);
+    assert_eq!(map_llm_category("Error"), PageCategory::Error);
+    assert_eq!(map_llm_category("Other"), PageCategory::Other);
+}
+
+// ============================================================================
+// 20. Category mapping: case insensitive
+// ============================================================================
+
+#[test]
+fn map_category_case_insensitive() {
+    assert_eq!(map_llm_category("login"), PageCategory::Login);
+    assert_eq!(map_llm_category("LOGIN"), PageCategory::Login);
+    assert_eq!(map_llm_category("Login"), PageCategory::Login);
+    assert_eq!(map_llm_category("search"), PageCategory::Search);
+    assert_eq!(map_llm_category("SEARCH"), PageCategory::Search);
+}
+
+// ============================================================================
+// 21. Category mapping: aliases
+// ============================================================================
+
+#[test]
+fn map_category_aliases() {
+    assert_eq!(map_llm_category("registration"), PageCategory::Registration);
+    assert_eq!(map_llm_category("signup"), PageCategory::Registration);
+    assert_eq!(map_llm_category("sign up"), PageCategory::Registration);
+    assert_eq!(map_llm_category("payment"), PageCategory::Checkout);
+    assert_eq!(map_llm_category("checkout"), PageCategory::Checkout);
+    assert_eq!(map_llm_category("settings"), PageCategory::Settings);
+    assert_eq!(map_llm_category("preferences"), PageCategory::Settings);
+    assert_eq!(map_llm_category("listing"), PageCategory::Listing);
+    assert_eq!(map_llm_category("detail"), PageCategory::Detail);
+}
+
+// ============================================================================
+// 22. Category mapping: unknown values → Other
+// ============================================================================
+
+#[test]
+fn map_category_unknown() {
+    assert_eq!(map_llm_category("SomethingRandom"), PageCategory::Other);
+    assert_eq!(map_llm_category("Form"), PageCategory::Other);
+    assert_eq!(map_llm_category(""), PageCategory::Other);
+    assert_eq!(map_llm_category("xyz"), PageCategory::Other);
+}
+
+// ============================================================================
+// 23. Hybrid enrichment: LLM overrides category on non-matching page
+// ============================================================================
+
+#[test]
+fn hybrid_llm_overrides_category() {
+    // LLM says Login, but empty_screen() has no forms → MockPageAnalyzer would say Other
+    let response = r#"{"purpose":"Auth page","category":"Login"}"#;
+    let analyzer = LlmPageAnalyzer::with_mock_response(response);
+    let screen = empty_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    assert_eq!(model.category, PageCategory::Login); // LLM override
+    assert_eq!(model.purpose, "Auth page"); // LLM override
+    // MockPageAnalyzer still populates the rest
+    assert!(model.forms.is_empty()); // empty screen has no forms
+    assert!(!model.suggested_assertions.is_empty()); // title-based assertion from Mock
+}
+
+// ============================================================================
+// 24. Hybrid enrichment: LLM provides purpose only (no category)
+// ============================================================================
+
+#[test]
+fn hybrid_llm_purpose_only() {
+    let response = r#"{"purpose":"A custom search interface"}"#;
+    let analyzer = LlmPageAnalyzer::with_mock_response(response);
+    let screen = search_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    assert_eq!(model.purpose, "A custom search interface"); // LLM override
+    assert_eq!(model.category, PageCategory::Search); // from MockPageAnalyzer (form intent)
+    assert_eq!(model.forms.len(), 1); // from MockPageAnalyzer
+}
+
+// ============================================================================
+// 25. Hybrid enrichment: LLM returns garbage → full fallback
+// ============================================================================
+
+#[test]
+fn hybrid_llm_garbage_response() {
+    let analyzer = LlmPageAnalyzer::with_mock_response("completely invalid response");
+    let screen = login_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    // Should be identical to MockPageAnalyzer output
+    let mock_model = MockPageAnalyzer.analyze(&login_screen()).unwrap();
+    assert_eq!(model.purpose, mock_model.purpose);
+    assert_eq!(model.category, mock_model.category);
+    assert_eq!(model.forms.len(), mock_model.forms.len());
+}
+
+// ============================================================================
+// 26. Hybrid enrichment: LLM unavailable (empty string)
+// ============================================================================
+
+#[test]
+fn hybrid_llm_unavailable() {
+    let analyzer = LlmPageAnalyzer::with_mock_response("");
+    let screen = search_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    // Should be identical to MockPageAnalyzer output
+    let mock_model = MockPageAnalyzer.analyze(&search_screen()).unwrap();
+    assert_eq!(model.purpose, mock_model.purpose);
+    assert_eq!(model.category, mock_model.category);
+    assert_eq!(model.forms.len(), mock_model.forms.len());
+}
+
+// ============================================================================
+// 27. Hybrid enrichment: preserves field types from deterministic rules
+// ============================================================================
+
+#[test]
+fn hybrid_preserves_field_types() {
+    let response = r#"{"purpose":"User authentication","category":"Login"}"#;
+    let analyzer = LlmPageAnalyzer::with_mock_response(response);
+    let screen = login_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    // LLM overrides
+    assert_eq!(model.purpose, "User authentication");
+    assert_eq!(model.category, PageCategory::Login);
+
+    // Deterministic field types preserved
+    assert_eq!(model.forms[0].fields[0].field_type, FieldType::Email);
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "user@example.com");
+    assert_eq!(model.forms[0].fields[1].field_type, FieldType::Password);
+    assert_eq!(model.forms[0].fields[1].suggested_test_value, "TestPass123!");
+    assert_eq!(model.forms[0].submit_label, Some("Sign In".into()));
+
+    // Navigation targets preserved
+    assert_eq!(model.navigation_targets.len(), 2);
+}
+
+// ============================================================================
+// 28. Prompt construction: contains URL and title
+// ============================================================================
+
+#[test]
+fn prompt_contains_url_and_title() {
+    let screen = login_screen();
+    let prompt = LlmPageAnalyzer::build_page_prompt(&screen);
+
+    assert!(prompt.contains("example.com/login"), "Prompt should contain URL");
+    assert!(prompt.contains("Login"), "Prompt should contain title");
+    assert!(prompt.contains("Email"), "Prompt should contain form field labels");
+    assert!(prompt.contains("Password"), "Prompt should contain form field labels");
+    assert!(prompt.contains("Sign In"), "Prompt should contain button labels");
+}
+
+// ============================================================================
+// 29. Prompt construction: empty page
+// ============================================================================
+
+#[test]
+fn prompt_empty_page() {
+    let screen = empty_screen();
+    let prompt = LlmPageAnalyzer::build_page_prompt(&screen);
+
+    assert!(prompt.contains("(none)"), "Empty forms should show (none)");
+    assert!(prompt.contains("Welcome"), "Should contain the page title");
+    // Should NOT contain old-style full schema
+    assert!(
+        !prompt.contains("field_type"),
+        "Simplified prompt should not ask for field_type"
+    );
+    assert!(
+        !prompt.contains("suggested_test_value"),
+        "Simplified prompt should not ask for test values"
+    );
+}
+
+// ============================================================================
+// 30. Prompt construction: reasonable length for small models
+// ============================================================================
+
+#[test]
+fn prompt_length_reasonable() {
+    let screen = login_screen();
+    let prompt = LlmPageAnalyzer::build_page_prompt(&screen);
+
+    assert!(
+        prompt.len() < 600,
+        "Prompt should be under 600 chars for small models, got {}",
+        prompt.len()
+    );
+    // Should be significantly shorter than the old ~1500 char prompt
+    assert!(
+        prompt.len() > 100,
+        "Prompt should be at least 100 chars, got {}",
+        prompt.len()
+    );
 }

@@ -195,13 +195,21 @@ impl Policy for HybridPolicy {
 pub struct OllamaBackend {
     pub endpoint: String,
     pub model: String,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
 }
 
 impl Default for OllamaBackend {
     fn default() -> Self {
         Self {
-            endpoint: "http://localhost:11434/api/generate".to_string(),
-            model: "qwen2.5:1.5b".to_string(),
+            endpoint: std::env::var("OLLAMA_ENDPOINT")
+                .unwrap_or_else(|_| "http://localhost:11434/api/generate".to_string()),
+            model: std::env::var("OLLAMA_MODEL")
+                .unwrap_or_else(|_| "qwen2.5:1.5b".to_string()),
+            temperature: Some(0.1),
+            top_p: Some(0.9),
+            top_k: Some(40),
         }
     }
 }
@@ -212,6 +220,12 @@ struct OllamaRequest {
     prompt: String,
     stream: bool,
     format: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -243,6 +257,9 @@ impl OllamaBackend {
         Self {
             endpoint: endpoint.to_string(),
             model: model.to_string(),
+            temperature: Some(0.1),
+            top_p: Some(0.9),
+            top_k: Some(40),
         }
     }
 
@@ -364,6 +381,9 @@ impl ModelBackend for OllamaBackend {
             prompt,
             stream: false,
             format: "json",
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
         };
 
         let client = reqwest::blocking::Client::new();
@@ -413,6 +433,9 @@ impl TextInference for OllamaBackend {
             prompt: prompt.to_string(),
             stream: false,
             format: "json",
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
         };
 
         let client = reqwest::blocking::Client::new();

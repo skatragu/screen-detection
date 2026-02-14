@@ -249,12 +249,91 @@ impl PageAnalyzer for MockPageAnalyzer {
 }
 
 // ============================================================================
-// LlmPageAnalyzer — uses TextInference to analyze pages via LLM
+// LLM response parsing — robust recovery for small models
 // ============================================================================
 
-/// LLM-backed page analyzer. Sends a structured prompt to an LLM via
-/// `TextInference`, parses the JSON response into a `PageModel`.
-/// Falls back to `MockPageAnalyzer` if the LLM response can't be parsed.
+/// Lightweight response structure for LLM output parsing.
+/// Only purpose and category — the LLM is not asked for form details.
+#[derive(serde::Deserialize)]
+pub struct LlmPageResponse {
+    #[serde(default)]
+    pub purpose: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+/// Attempt to fix common JSON issues from small LLM output.
+/// Tries: raw parse → strip markdown fences → fix trailing commas → extract JSON substring.
+pub fn try_parse_llm_response(raw: &str) -> Option<LlmPageResponse> {
+    // Stage 1: Direct parse
+    if let Ok(parsed) = serde_json::from_str::<LlmPageResponse>(raw) {
+        return Some(parsed);
+    }
+
+    // Stage 2: Strip markdown code fences (```json ... ```)
+    let stripped = raw
+        .trim()
+        .strip_prefix("```json")
+        .or_else(|| raw.trim().strip_prefix("```"))
+        .and_then(|s| s.strip_suffix("```"))
+        .unwrap_or(raw)
+        .trim();
+
+    if let Ok(parsed) = serde_json::from_str::<LlmPageResponse>(stripped) {
+        return Some(parsed);
+    }
+
+    // Stage 3: Fix trailing commas (common small-model error)
+    let no_trailing = stripped.replace(",}", "}").replace(",]", "]");
+    if let Ok(parsed) = serde_json::from_str::<LlmPageResponse>(&no_trailing) {
+        return Some(parsed);
+    }
+
+    // Stage 4: Extract first JSON object substring { ... }
+    if let Some(start) = stripped.find('{') {
+        if let Some(end) = stripped.rfind('}') {
+            if end > start {
+                let substring = &stripped[start..=end];
+                let fixed = substring.replace(",}", "}").replace(",]", "]");
+                if let Ok(parsed) = serde_json::from_str::<LlmPageResponse>(&fixed) {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Map LLM's simplified category string to PageCategory.
+/// Handles case-insensitive matching and common variations.
+pub fn map_llm_category(raw: &str) -> PageCategory {
+    let lower = raw.to_lowercase();
+    match lower.trim() {
+        "login" | "signin" | "sign in" => PageCategory::Login,
+        "registration" | "register" | "signup" | "sign up" => PageCategory::Registration,
+        "search" => PageCategory::Search,
+        "dashboard" | "home" => PageCategory::Dashboard,
+        "settings" | "preferences" => PageCategory::Settings,
+        "listing" | "list" => PageCategory::Listing,
+        "detail" | "details" => PageCategory::Detail,
+        "checkout" | "payment" => PageCategory::Checkout,
+        "error" | "404" | "500" => PageCategory::Error,
+        _ => PageCategory::Other,
+    }
+}
+
+// ============================================================================
+// LlmPageAnalyzer — hybrid enrichment (LLM semantics + deterministic details)
+// ============================================================================
+
+/// LLM-backed page analyzer using hybrid enrichment strategy.
+///
+/// Asks the LLM for only `purpose` and `category` (simple 2-field JSON),
+/// then builds the full `PageModel` deterministically via `MockPageAnalyzer`.
+/// The LLM's purpose and category override the deterministic defaults when
+/// available and valid. This approach never fails — it always produces a
+/// complete `PageModel`.
 pub struct LlmPageAnalyzer {
     backend: Box<dyn TextInference>,
 }
@@ -264,8 +343,9 @@ impl LlmPageAnalyzer {
         Self { backend }
     }
 
-    /// Build a structured prompt describing the page for LLM analysis.
-    fn build_page_prompt(screen: &ScreenState) -> String {
+    /// Build a simplified prompt for small (1-1.5B) models.
+    /// Only asks for purpose and category — 2 fields, ~120 words total.
+    pub fn build_page_prompt(screen: &ScreenState) -> String {
         let forms_summary = screen
             .forms
             .iter()
@@ -274,19 +354,15 @@ impl LlmPageAnalyzer {
                     .inputs
                     .iter()
                     .map(|i| {
-                        let label = i.label.clone().unwrap_or_else(|| "unlabeled".to_string());
-                        let input_type =
-                            i.input_type.clone().unwrap_or_else(|| "text".to_string());
+                        let label = i.label.clone().unwrap_or_else(|| "unlabeled".into());
+                        let input_type = i.input_type.clone().unwrap_or_else(|| "text".into());
                         format!("{} ({})", label, input_type)
                     })
                     .collect();
-                let actions: Vec<String> = f
-                    .actions
-                    .iter()
-                    .filter_map(|a| a.label.clone())
-                    .collect();
+                let actions: Vec<String> =
+                    f.actions.iter().filter_map(|a| a.label.clone()).collect();
                 format!(
-                    "    - Form '{}': fields=[{}], submit=[{}]",
+                    "  Form '{}': fields=[{}], buttons=[{}]",
                     f.id,
                     fields.join(", "),
                     actions.join(", ")
@@ -299,73 +375,31 @@ impl LlmPageAnalyzer {
             .outputs
             .iter()
             .filter_map(|o| o.label.clone())
-            .take(5)
+            .take(3)
             .collect::<Vec<_>>()
             .join("; ");
 
-        let actions_summary = screen
-            .standalone_actions
-            .iter()
-            .filter_map(|a| a.label.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
-
         format!(
-            r##"Analyze this web page and return a JSON object describing it.
+            r#"Analyze this web page. Return JSON with "purpose" and "category".
 
-PAGE STATE:
+Page:
 - URL: {url}
 - Title: {title}
 - Forms:
 {forms}
-- Outputs: {outputs}
-- Standalone actions: {actions}
+- Visible text: {outputs}
 
-Return ONLY valid JSON matching this exact schema:
-{{
-  "purpose": "Brief description of the page's purpose",
-  "category": "Login|Registration|Search|Dashboard|Settings|Listing|Detail|Checkout|Error|Other",
-  "forms": [
-    {{
-      "form_id": "form id string",
-      "purpose": "what the form does",
-      "fields": [
-        {{
-          "label": "field label",
-          "field_type": "Text|Email|Password|Number|Date|Tel|Url|Select|Checkbox|Radio|Other",
-          "required": true,
-          "suggested_test_value": "a realistic test value"
-        }}
-      ],
-      "submit_label": "button text or null"
-    }}
-  ],
-  "outputs": [
-    {{
-      "description": "what the output shows",
-      "region": "main|header|footer|results"
-    }}
-  ],
-  "suggested_assertions": [
-    {{
-      "assertion_type": "title_contains|text_present|text_absent|element_visible|url_contains",
-      "expected": "expected value",
-      "description": "what this assertion verifies"
-    }}
-  ],
-  "navigation_targets": [
-    {{
-      "label": "link or button text",
-      "likely_destination": "where it goes"
-    }}
-  ]
-}}
+Categories: Login, Search, Dashboard, Error, Form, Other
 
-Respond with ONLY valid JSON, no explanation."##,
+Example:
+Page with title "Sign In", form with email+password fields, "Log In" button.
+{{"purpose":"User login page","category":"Login"}}
+
+Now analyze the page above. Return ONLY JSON:{{"purpose":"...","category":"..."}}"#,
             url = screen.url.as_deref().unwrap_or("unknown"),
             title = screen.title,
             forms = if forms_summary.is_empty() {
-                "    (none)".to_string()
+                "  (none)".to_string()
             } else {
                 forms_summary
             },
@@ -373,11 +407,6 @@ Respond with ONLY valid JSON, no explanation."##,
                 "(none)"
             } else {
                 &outputs_summary
-            },
-            actions = if actions_summary.is_empty() {
-                "(none)"
-            } else {
-                &actions_summary
             },
         )
     }
@@ -387,22 +416,33 @@ impl PageAnalyzer for LlmPageAnalyzer {
     fn analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError> {
         let prompt = Self::build_page_prompt(screen);
 
-        match self.backend.infer_text(&prompt) {
-            Some(response) => {
-                // Try to parse LLM response as PageModel
-                match serde_json::from_str::<PageModel>(&response) {
-                    Ok(model) => Ok(model),
-                    Err(_) => {
-                        // Fallback to deterministic analysis
-                        MockPageAnalyzer.analyze(screen)
-                    }
+        // Try to get LLM-provided purpose and category
+        let (llm_purpose, llm_category) = match self.backend.infer_text(&prompt) {
+            Some(response) => match try_parse_llm_response(&response) {
+                Some(parsed) => {
+                    let purpose = parsed.purpose;
+                    let category = parsed.category.map(|c| map_llm_category(&c));
+                    (purpose, category)
                 }
-            }
-            None => {
-                // LLM unavailable, fall back to deterministic
-                MockPageAnalyzer.analyze(screen)
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+
+        // Build the base model deterministically (always succeeds)
+        let mut model = MockPageAnalyzer.analyze(screen)?;
+
+        // Enrich with LLM insights where available
+        if let Some(purpose) = llm_purpose {
+            if !purpose.is_empty() {
+                model.purpose = purpose;
             }
         }
+        if let Some(category) = llm_category {
+            model.category = category;
+        }
+
+        Ok(model)
     }
 }
 

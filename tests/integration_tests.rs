@@ -10,7 +10,8 @@
 
 use std::collections::HashMap;
 
-use screen_detection::agent::page_analyzer::MockPageAnalyzer;
+use screen_detection::agent::ai_model::OllamaBackend;
+use screen_detection::agent::page_analyzer::{LlmPageAnalyzer, MockPageAnalyzer, PageAnalyzer};
 use screen_detection::browser::playwright::SelectorHint;
 use screen_detection::browser::session::BrowserSession;
 use screen_detection::canonical::diff::{semantic_diff, SemanticSignal};
@@ -557,4 +558,122 @@ fn test_detect_flows_from_live_exploration() {
         assert!(!flow.name.is_empty(), "Flow should have a name");
         assert!(!flow.steps.is_empty(), "Flow should have steps");
     }
+}
+
+// ============================================================================
+// Group I: LLM Page Analysis (5 tests)
+// Requires Ollama running locally with a model (default: qwen2.5:1.5b)
+// ============================================================================
+
+#[test]
+#[ignore]
+fn test_llm_page_analysis_login() {
+    let mut session = BrowserSession::launch().unwrap();
+    session.navigate(&page("05_error.html")).unwrap();
+    let (screen, _) = snapshot_session(&mut session).unwrap();
+
+    let backend = Box::new(OllamaBackend::default());
+    let analyzer = LlmPageAnalyzer::new(backend);
+    let model = analyzer.analyze(&screen).unwrap();
+
+    // The LLM should identify this as a Login page (has email + password fields)
+    assert_eq!(
+        model.category,
+        screen_detection::agent::page_model::PageCategory::Login,
+        "LLM should identify login page, got {:?}",
+        model.category
+    );
+    // Form details should be populated by deterministic rules
+    assert!(!model.forms.is_empty(), "Should have at least one form");
+    assert!(
+        !model.forms[0].fields.is_empty(),
+        "Form should have fields from deterministic analysis"
+    );
+}
+
+#[test]
+#[ignore]
+fn test_llm_page_analysis_search() {
+    let mut session = BrowserSession::launch().unwrap();
+    session.navigate(&page("01_search_form.html")).unwrap();
+    let (screen, _) = snapshot_session(&mut session).unwrap();
+
+    let backend = Box::new(OllamaBackend::default());
+    let analyzer = LlmPageAnalyzer::new(backend);
+    let model = analyzer.analyze(&screen).unwrap();
+
+    // The LLM should identify this as a Search page
+    assert_eq!(
+        model.category,
+        screen_detection::agent::page_model::PageCategory::Search,
+        "LLM should identify search page, got {:?}",
+        model.category
+    );
+    assert!(!model.forms.is_empty(), "Should have the search form");
+}
+
+#[test]
+#[ignore]
+fn test_llm_config_from_env() {
+    // Test that OllamaBackend reads from environment variables
+    let backend = OllamaBackend::default();
+    // Without env vars set, should use defaults
+    assert!(
+        backend.endpoint.contains("11434"),
+        "Default endpoint should be localhost:11434"
+    );
+    assert_eq!(backend.temperature, Some(0.1));
+    assert_eq!(backend.top_p, Some(0.9));
+    assert_eq!(backend.top_k, Some(40));
+}
+
+#[test]
+#[ignore]
+fn test_llm_explore_live_with_analyzer() {
+    let mut session = BrowserSession::launch().unwrap();
+    let backend = Box::new(OllamaBackend::default());
+    let analyzer = LlmPageAnalyzer::new(backend);
+
+    let config = ExplorerConfig {
+        start_url: page("01_search_form.html"),
+        max_pages: 3,
+        max_depth: 1,
+        same_origin_only: false,
+        explore_forms: true,
+        max_forms_per_page: 2,
+    };
+
+    let map = explore_live(&config, &mut session, &analyzer).unwrap();
+    assert!(map.page_count() >= 1, "Should discover at least the start page");
+
+    // Verify pages have valid categories from LLM analysis
+    for (_url, node) in &map.pages {
+        assert!(
+            !node.page_model.purpose.is_empty(),
+            "Each page should have a purpose"
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn test_llm_recovery_nonexistent_model() {
+    let mut session = BrowserSession::launch().unwrap();
+    session.navigate(&page("01_search_form.html")).unwrap();
+    let (screen, _) = snapshot_session(&mut session).unwrap();
+
+    // Use a non-existent model — should fall back to deterministic analysis
+    let backend = Box::new(OllamaBackend::new(
+        "http://localhost:11434/api/generate",
+        "nonexistent-model:latest",
+    ));
+    let analyzer = LlmPageAnalyzer::new(backend);
+    let model = analyzer.analyze(&screen).unwrap();
+
+    // Should still succeed via fallback to MockPageAnalyzer
+    assert!(
+        !model.purpose.is_empty(),
+        "Should have a purpose from fallback"
+    );
+    assert!(!model.forms.is_empty(), "Should have forms from fallback");
 }
