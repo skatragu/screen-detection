@@ -25,6 +25,22 @@ pub struct ExplorerConfig {
 
     /// Only follow links to the same origin (default true)
     pub same_origin_only: bool,
+
+    /// Whether to fill and submit forms during exploration (default true)
+    #[serde(default = "default_true")]
+    pub explore_forms: bool,
+
+    /// Maximum number of forms to submit per page (default 3)
+    #[serde(default = "default_three")]
+    pub max_forms_per_page: usize,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_three() -> usize {
+    3
 }
 
 impl Default for ExplorerConfig {
@@ -34,6 +50,8 @@ impl Default for ExplorerConfig {
             max_pages: 10,
             max_depth: 3,
             same_origin_only: true,
+            explore_forms: true,
+            max_forms_per_page: 3,
         }
     }
 }
@@ -61,9 +79,29 @@ pub struct PageNode {
     pub page_model: PageModel,
 }
 
+/// How a transition between pages was triggered.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TransitionKind {
+    /// Clicked a link or standalone button
+    Link,
+    /// Filled and submitted a form
+    FormSubmission {
+        form_id: String,
+        values: HashMap<String, String>,
+    },
+}
+
+impl Default for TransitionKind {
+    fn default() -> Self {
+        TransitionKind::Link
+    }
+}
+
 /// A directed edge between two pages in the AppMap.
 ///
-/// Records which link/button text caused the transition.
+/// Records which link/button text caused the transition and how
+/// the transition was triggered (link click or form submission).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transition {
     /// Source page URL
@@ -74,6 +112,34 @@ pub struct Transition {
 
     /// Label of the link or button that caused this transition
     pub label: String,
+
+    /// How this transition was triggered (defaults to Link for backward compat)
+    #[serde(default)]
+    pub kind: TransitionKind,
+}
+
+/// A single step in a detected multi-page flow.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum FlowStep {
+    /// Navigate to a URL
+    Navigate { url: String },
+    /// Fill a form and submit it
+    FillAndSubmit {
+        url: String,
+        form_id: String,
+        values: HashMap<String, String>,
+        submit_label: Option<String>,
+    },
+}
+
+/// A detected multi-step user flow (e.g., login -> dashboard).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Flow {
+    /// Human-readable name for the flow
+    pub name: String,
+    /// Ordered steps in the flow
+    pub steps: Vec<FlowStep>,
 }
 
 /// Graph of discovered pages and transitions.

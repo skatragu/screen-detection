@@ -24,6 +24,7 @@ pub mod spec;
 pub mod state;
 pub mod trace;
 pub mod explorer;
+pub mod report;
 
 const MAX_ITERATIONS: u32 = 20;
 

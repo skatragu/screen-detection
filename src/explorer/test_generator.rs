@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::agent::page_model::{FormModel, PageModel, SuggestedAssertion};
 use crate::spec::spec_model::{AssertionSpec, TestSpec, TestStep};
 
-use super::app_map::AppMap;
+use super::app_map::{AppMap, Flow, FlowStep};
+use super::flow_detector::detect_flows;
 
 // ============================================================================
 // Test plan generation from AppMap
@@ -31,6 +32,10 @@ pub fn generate_test_plan(app_map: &AppMap) -> Vec<TestSpec> {
             specs.push(generate_form_test(url, form, &node.page_model));
         }
     }
+
+    // Flow tests from detected multi-step journeys
+    let flows = detect_flows(app_map);
+    specs.extend(generate_flow_tests(&flows));
 
     specs
 }
@@ -82,6 +87,58 @@ pub fn generate_form_test(url: &str, form: &FormModel, model: &PageModel) -> Tes
         start_url: url.to_string(),
         steps: vec![fill_step],
     }
+}
+
+// ============================================================================
+// Assertion mapping
+// ============================================================================
+
+// ============================================================================
+// Flow-based test generation
+// ============================================================================
+
+/// Generate multi-step flow tests from detected flows.
+///
+/// Each flow becomes a single `TestSpec` with Navigate and FillAndSubmit steps
+/// that replay the discovered multi-page journey.
+pub fn generate_flow_tests(flows: &[Flow]) -> Vec<TestSpec> {
+    flows
+        .iter()
+        .map(|flow| {
+            let start_url = flow
+                .steps
+                .iter()
+                .find_map(|s| match s {
+                    FlowStep::Navigate { url } => Some(url.clone()),
+                    FlowStep::FillAndSubmit { url, .. } => Some(url.clone()),
+                })
+                .unwrap_or_default();
+
+            let steps: Vec<TestStep> = flow
+                .steps
+                .iter()
+                .map(|s| match s {
+                    FlowStep::Navigate { url } => TestStep::Navigate { url: url.clone() },
+                    FlowStep::FillAndSubmit {
+                        form_id,
+                        values,
+                        submit_label,
+                        ..
+                    } => TestStep::FillAndSubmit {
+                        form: form_id.clone(),
+                        values: values.clone(),
+                        submit_label: submit_label.clone(),
+                    },
+                })
+                .collect();
+
+            TestSpec {
+                name: flow.name.clone(),
+                start_url,
+                steps,
+            }
+        })
+        .collect()
 }
 
 // ============================================================================

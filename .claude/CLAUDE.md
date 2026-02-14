@@ -26,7 +26,8 @@ Raw DOM (JSON from Playwright/Node.js)
 | `canonical` | `canonical_model.rs`, `diff.rs` | Canonicalizes state into BTreeMap; derives semantic signals from diffs |
 | `agent` | `agent.rs`, `agent_model.rs`, `ai_model.rs`, `budget.rs`, `error.rs`, `page_model.rs`, `page_analyzer.rs` | State machine (Observe->Evaluate->Think->Act->Stop); multi-layer gating; pluggable LLM backends with `DeterministicPolicy` and `HybridPolicy`; typed `AgentError` enum; both subprocess and session execution; AI page understanding via `PageAnalyzer` trait |
 | `spec` | `spec_model.rs`, `context.rs`, `runner.rs` | Test spec data model (TestSpec, TestStep, AssertionSpec); TestRunner executes specs via BrowserSession; TestContext tracks assertion results |
-| `explorer` | `app_map.rs`, `explorer.rs`, `test_generator.rs` | Autonomous exploration and test generation; AppMap page graph (PageNode, Transition); BFS multi-page crawling via BrowserSession; TestSpec generation from PageModel (smoke + form tests) |
+| `explorer` | `app_map.rs`, `explorer.rs`, `flow_detector.rs`, `test_generator.rs` | Autonomous exploration and test generation; AppMap page graph (PageNode, Transition, TransitionKind); form-aware BFS crawling via BrowserSession; flow detection across FormSubmission chains; TestSpec generation from PageModel (smoke + form + flow tests) |
+| `report` | `report_model.rs`, `console.rs`, `html.rs`, `junit.rs` | Test suite reporting; `TestSuiteReport` aggregation; console output (pass/fail markers), self-contained HTML report, JUnit XML for CI |
 | `trace` | `trace.rs`, `logger.rs` | JSONL trace logging with builder-pattern TraceEvent |
 
 ## Key Design Decisions
@@ -42,8 +43,10 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Dual browser modes**: Subprocess mode (`execute_action` via interact.js, fresh browser per action) for backward compatibility; Session mode (`execute_action_session` via `BrowserSession`/browser_server.js, persistent browser) for multi-page flows.
 - **NDJSON session protocol**: `BrowserSession` communicates with `browser_server.js` via newline-delimited JSON over stdin/stdout. Commands: navigate, extract, action (fill/click/wait), screenshot, current_url, query_text, query_visible, query_count, quit.
 - **CSS selector queries**: Element assertions (ElementText, ElementVisible, ElementCount) use raw CSS selectors (`#id`, `.class`, `tag`) via browser query commands, separate from the semantic `SelectorHint` used for agent interactions.
-- **Autonomous exploration**: `ExplorerConfig` controls BFS crawling (max_pages, max_depth, same_origin_only). `explore()` for offline single-page analysis, `explore_live()` for multi-page BFS via `BrowserSession`. Builds `AppMap` graph of `PageNode`s + `Transition`s.
-- **Test generation**: `generate_test_plan(app_map)` produces `Vec<TestSpec>` from explored pages. Per page: smoke test (wait + assert suggested_assertions) + per-form test (fill_and_submit with AI-suggested values). `map_suggested_assertion()` bridges `SuggestedAssertion` → `AssertionSpec`.
+- **Autonomous exploration**: `ExplorerConfig` controls BFS crawling (max_pages, max_depth, same_origin_only, explore_forms, max_forms_per_page). `explore()` for offline single-page analysis, `explore_live()` for multi-page BFS via `BrowserSession`. Builds `AppMap` graph of `PageNode`s + `Transition`s. Form-aware: fills/submits forms during crawling to discover post-submit pages (dashboards, search results).
+- **Transition tracking**: `TransitionKind` enum (`Link` | `FormSubmission { form_id, values }`) tracks how each page transition was triggered. Defaults to `Link` for backward compatibility via `#[serde(default)]`.
+- **Flow detection**: `detect_flows(app_map)` walks `FormSubmission` transition chains to discover multi-step user flows. Starts from "origin" pages (not targets of other form submissions). Names flows from `PageCategory` (e.g., "Flow: Login -> Dashboard").
+- **Test generation**: `generate_test_plan(app_map)` produces `Vec<TestSpec>` from explored pages. Per page: smoke test (wait + assert suggested_assertions) + per-form test (fill_and_submit with AI-suggested values). Plus flow tests from `detect_flows()`. `map_suggested_assertion()` bridges `SuggestedAssertion` → `AssertionSpec`.
 
 ## Constants
 
@@ -60,7 +63,9 @@ Raw DOM (JSON from Playwright/Node.js)
 
 ```bash
 cargo build
-cargo test
+cargo test                       # 141 offline tests (fast, no browser needed)
+cargo test -- --ignored          # 23 integration tests (requires Node.js + Playwright)
+cargo test -- --include-ignored  # all 164 tests
 ```
 
 - Rust edition 2024
@@ -68,14 +73,18 @@ cargo test
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 111 integration tests split across module-based test files:
+- 164 tests total: 141 offline + 23 integration (real browser via `#[ignore]`)
+- 141 offline tests split across module-based test files:
   - `tests/agent_tests.rs` (30) — agent behavior, policy logic, guess_value heuristics, budget gating, error handling
   - `tests/browser_tests.rs` (24) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
-  - `tests/explorer_tests.rs` (15) — ExplorerConfig, AppMap data model, explore() offline, test generation (smoke/form), map_suggested_assertion, is_same_origin, resolve_url
+  - `tests/explorer_tests.rs` (30) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url
   - `tests/page_model_tests.rs` (12) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer, LlmPageAnalyzer with mock/fallback, field classification, navigation targets
+  - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
   - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
+- 19 integration tests (real browser, `#[ignore]`):
+  - `tests/integration_tests.rs` (23) — session lifecycle, DOM pipeline, queries, form interaction, TestRunner, navigation, canonical pipeline, form-aware exploration, flow detection
 
 ## External Dependencies
 
@@ -118,10 +127,14 @@ cargo test
 - `PageAnalyzer` trait: `analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError>` — pluggable page analysis
 - `TextInference` trait: `infer_text(&self, prompt: &str) -> Option<String>` — generic text-in/text-out LLM interface
 - `MockTextInference`: canned response for deterministic testing of LlmPageAnalyzer
-- `ExplorerConfig`: start_url, max_pages (10), max_depth (3), same_origin_only (true) — controls autonomous BFS crawling
+- `ExplorerConfig`: start_url, max_pages (10), max_depth (3), same_origin_only (true), explore_forms (true), max_forms_per_page (3) — controls autonomous BFS crawling with form-aware exploration
 - `PageNode`: url, title, depth, page_model (PageModel) — single discovered page in the AppMap
-- `Transition`: from_url, to_url, label — directed edge between pages
+- `TransitionKind`: Link | FormSubmission { form_id, values } — how a page transition was triggered; defaults to Link via serde
+- `Transition`: from_url, to_url, label, kind (TransitionKind) — directed edge between pages with transition tracking
+- `FlowStep`: Navigate { url } | FillAndSubmit { url, form_id, values, submit_label } — single step in a multi-page flow
+- `Flow`: name, steps (Vec<FlowStep>) — detected multi-step user journey
 - `AppMap`: pages (HashMap<String, PageNode>), transitions (Vec<Transition>) — graph of discovered pages; has add_page(), add_transition(), page_count(), has_page()
+- `TestSuiteReport`: suite_name, total, passed, failed, duration_ms, test_results — aggregated report; from_results(), with_duration(), all_passed()
 
 ## File Layout
 
@@ -160,14 +173,21 @@ src/
     normalize.rs      -- Text normalization, region inference (OutputRegion), volatility detection
   explorer/
     mod.rs            -- Module exports
-    app_map.rs        -- ExplorerConfig, PageNode, Transition, AppMap (page graph data model)
-    explorer.rs       -- explore() (offline single-page), explore_live() (BFS multi-page via BrowserSession), is_same_origin(), resolve_url()
-    test_generator.rs -- generate_test_plan(), generate_smoke_test(), generate_form_test(), map_suggested_assertion()
+    app_map.rs        -- ExplorerConfig, PageNode, TransitionKind, Transition, FlowStep, Flow, AppMap (page graph data model)
+    explorer.rs       -- explore() (offline single-page), explore_live() (form-aware BFS via BrowserSession), submit_form_in_session(), is_same_origin(), resolve_url()
+    flow_detector.rs  -- detect_flows() (walks FormSubmission chains), build_flow_step(), name_flow()
+    test_generator.rs -- generate_test_plan(), generate_smoke_test(), generate_form_test(), generate_flow_tests(), map_suggested_assertion()
   spec/
     mod.rs            -- Module exports
     spec_model.rs     -- TestSpec, TestStep, AssertionSpec, AssertionResult, TestResult
     context.rs        -- TestContext: step tracking, assertion result collection, pass/fail counting
     runner.rs         -- TestRunner: executes TestSpec via BrowserSession, evaluates assertions
+  report/
+    mod.rs            -- Module exports
+    report_model.rs   -- TestSuiteReport: aggregation of Vec<TestResult>, from_results(), with_duration(), all_passed()
+    console.rs        -- format_console_report(): terminal output with pass/fail markers and failure details
+    html.rs           -- generate_html_report(): self-contained HTML with inline CSS, green/red header
+    junit.rs          -- generate_junit_xml(): standard JUnit XML for CI (Jenkins, GitHub Actions), escape_xml()
   trace/
     mod.rs            -- Module exports
     trace.rs          -- TraceEvent builder
@@ -176,10 +196,12 @@ tests/
   agent_tests.rs      -- 30 tests: agent behavior, policy, guess_value, budget, errors
   browser_tests.rs    -- 24 tests: BrowserRequest/Response serde, session errors, query protocol
   canonical_tests.rs  -- 12 tests: classification, diffing, signals
-  explorer_tests.rs   -- 15 tests: ExplorerConfig, AppMap, explore(), test generation, assertion mapping, URL utilities
+  explorer_tests.rs   -- 30 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow), URL utilities
   page_model_tests.rs -- 12 tests: PageModel serde, MockPageAnalyzer, LlmPageAnalyzer, field classification
+  report_tests.rs     -- 15 tests: TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
   state_tests.rs      -- 3 tests: normalize, form intent scoring
+  integration_tests.rs -- 23 tests (real browser, #[ignore]): session, DOM, queries, forms, runner, nav, canonical, form-aware exploration, flow detection
   common/
     mod.rs            -- Module exports
     utils.rs          -- page() helper, is_terminal_success()

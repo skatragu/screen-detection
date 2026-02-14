@@ -1,11 +1,13 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use crate::agent::error::AgentError;
 use crate::agent::page_analyzer::{MockPageAnalyzer, PageAnalyzer};
+use crate::agent::page_model::FormModel;
+use crate::browser::playwright::SelectorHint;
 use crate::browser::session::BrowserSession;
 use crate::state::state_model::ScreenState;
 
-use super::app_map::{AppMap, ExplorerConfig, PageNode, Transition};
+use super::app_map::{AppMap, ExplorerConfig, PageNode, Transition, TransitionKind};
 
 // ============================================================================
 // Offline exploration (unit-testable, no browser needed)
@@ -99,9 +101,78 @@ pub fn explore_live(
                     from_url: url.clone(),
                     to_url: resolved.clone(),
                     label: target.label.clone(),
+                    kind: TransitionKind::Link,
                 });
                 if !app_map.has_page(&resolved) {
                     queue.push_back((resolved, depth + 1));
+                }
+            }
+        }
+
+        // --- Form-aware exploration ---
+        if config.explore_forms {
+            let forms_to_explore: Vec<_> = model
+                .forms
+                .iter()
+                .take(config.max_forms_per_page)
+                .filter(|f| !f.fields.is_empty())
+                .cloned()
+                .collect();
+
+            for form in &forms_to_explore {
+                if app_map.page_count() >= config.max_pages {
+                    break;
+                }
+
+                // Navigate back (form submit may have changed the page)
+                session.navigate(&url)?;
+
+                // Build values from suggested test values
+                let values: HashMap<String, String> = form
+                    .fields
+                    .iter()
+                    .map(|f| (f.label.clone(), f.suggested_test_value.clone()))
+                    .collect();
+
+                // Fill and submit — graceful: skip on failure
+                if submit_form_in_session(session, form).is_ok() {
+                    let result_url = session
+                        .current_url()
+                        .unwrap_or_else(|_| url.clone());
+
+                    if let Ok((result_screen, _canonical)) = crate::snapshot_session(session) {
+                        let result_page_url = result_screen
+                            .url
+                            .clone()
+                            .unwrap_or_else(|| result_url.clone());
+
+                        // Record FormSubmission transition
+                        app_map.add_transition(Transition {
+                            from_url: url.clone(),
+                            to_url: result_page_url.clone(),
+                            label: form
+                                .submit_label
+                                .clone()
+                                .unwrap_or_else(|| "submit".into()),
+                            kind: TransitionKind::FormSubmission {
+                                form_id: form.form_id.clone(),
+                                values,
+                            },
+                        });
+
+                        // Add result page if new
+                        if !app_map.has_page(&result_page_url) {
+                            let result_model = analyzer.analyze(&result_screen)?;
+                            let result_node = PageNode {
+                                url: result_page_url.clone(),
+                                title: result_screen.title.clone(),
+                                depth: depth + 1,
+                                page_model: result_model,
+                            };
+                            app_map.add_page(result_node);
+                            queue.push_back((result_page_url, depth + 1));
+                        }
+                    }
                 }
             }
         }
@@ -117,6 +188,44 @@ pub fn explore_live(
     }
 
     Ok(app_map)
+}
+
+// ============================================================================
+// Form submission helper
+// ============================================================================
+
+/// Fill and submit a form via BrowserSession.
+///
+/// Fills each field using SelectorHint targeting, then clicks the submit button.
+/// Returns Ok(()) on success, Err on browser action failure.
+fn submit_form_in_session(
+    session: &mut BrowserSession,
+    form: &FormModel,
+) -> Result<(), AgentError> {
+    for field in &form.fields {
+        let selector = SelectorHint {
+            role: Some("textbox".into()),
+            name: Some(field.label.clone()),
+            tag: Some("input".into()),
+            input_type: None,
+            form_id: Some(form.form_id.clone()),
+        };
+        session.fill(&selector, &field.suggested_test_value)?;
+    }
+
+    if let Some(label) = &form.submit_label {
+        let selector = SelectorHint {
+            role: Some("button".into()),
+            name: Some(label.clone()),
+            tag: None,
+            input_type: None,
+            form_id: None,
+        };
+        session.click(&selector)?;
+    }
+
+    session.wait_idle(500)?;
+    Ok(())
 }
 
 // ============================================================================

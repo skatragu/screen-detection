@@ -4,10 +4,14 @@ use screen_detection::agent::page_model::{
     FieldModel, FieldType, FormModel, NavigationTarget, PageCategory, PageModel,
     SuggestedAssertion,
 };
-use screen_detection::explorer::app_map::{AppMap, ExplorerConfig, PageNode, Transition};
+use screen_detection::explorer::app_map::{
+    AppMap, ExplorerConfig, Flow, FlowStep, PageNode, Transition, TransitionKind,
+};
 use screen_detection::explorer::explorer::{explore, is_same_origin, resolve_url};
+use screen_detection::explorer::flow_detector::detect_flows;
 use screen_detection::explorer::test_generator::{
-    generate_form_test, generate_smoke_test, generate_test_plan, map_suggested_assertion,
+    generate_flow_tests, generate_form_test, generate_smoke_test, generate_test_plan,
+    map_suggested_assertion,
 };
 use screen_detection::screen::screen_model::{
     ElementKind, Form, FormIntent, IntentSignal, ScreenElement,
@@ -185,6 +189,45 @@ fn search_page_model() -> PageModel {
     }
 }
 
+fn dashboard_page_model() -> PageModel {
+    PageModel {
+        purpose: "User dashboard after login".into(),
+        category: PageCategory::Dashboard,
+        forms: vec![],
+        outputs: vec![],
+        suggested_assertions: vec![SuggestedAssertion {
+            assertion_type: "title_contains".into(),
+            expected: "Dashboard".into(),
+            description: "Verify page title contains 'Dashboard'".into(),
+        }],
+        navigation_targets: vec![NavigationTarget {
+            label: "Settings".into(),
+            likely_destination: "Settings page".into(),
+        }],
+    }
+}
+
+fn settings_page_model() -> PageModel {
+    PageModel {
+        purpose: "User settings page".into(),
+        category: PageCategory::Settings,
+        forms: vec![FormModel {
+            form_id: "profile".into(),
+            purpose: "Profile settings".into(),
+            fields: vec![FieldModel {
+                label: "Display Name".into(),
+                field_type: FieldType::Text,
+                required: true,
+                suggested_test_value: "Test User".into(),
+            }],
+            submit_label: Some("Save".into()),
+        }],
+        outputs: vec![],
+        suggested_assertions: vec![],
+        navigation_targets: vec![],
+    }
+}
+
 // ============================================================================
 // 1. ExplorerConfig defaults
 // ============================================================================
@@ -209,6 +252,8 @@ fn explorer_config_yaml_roundtrip() {
         max_pages: 20,
         max_depth: 5,
         same_origin_only: false,
+        explore_forms: true,
+        max_forms_per_page: 5,
     };
     let yaml = serde_yaml::to_string(&config).unwrap();
     let parsed: ExplorerConfig = serde_yaml::from_str(&yaml).unwrap();
@@ -261,6 +306,7 @@ fn app_map_add_transition() {
         from_url: "https://example.com/login".into(),
         to_url: "https://example.com/register".into(),
         label: "Sign Up".into(),
+        kind: TransitionKind::Link,
     });
 
     assert_eq!(map.transitions.len(), 1);
@@ -292,6 +338,7 @@ fn app_map_json_roundtrip() {
         from_url: "https://example.com/login".into(),
         to_url: "https://example.com/search".into(),
         label: "Go to Search".into(),
+        kind: TransitionKind::Link,
     });
 
     let json = serde_json::to_string(&map).unwrap();
@@ -622,4 +669,380 @@ fn app_map_no_duplicate_pages() {
 
     // The title should be the updated one
     assert_eq!(map.pages["https://example.com/login"].title, "Login v2");
+}
+
+// ============================================================================
+// 16. TransitionKind defaults to Link
+// ============================================================================
+
+#[test]
+fn transition_kind_link_default() {
+    let kind = TransitionKind::default();
+    assert_eq!(kind, TransitionKind::Link);
+}
+
+// ============================================================================
+// 17. TransitionKind::FormSubmission serde roundtrip
+// ============================================================================
+
+#[test]
+fn transition_kind_form_submission_serde() {
+    let mut values = HashMap::new();
+    values.insert("Email".into(), "user@example.com".into());
+    values.insert("Password".into(), "TestPass123!".into());
+
+    let kind = TransitionKind::FormSubmission {
+        form_id: "login".into(),
+        values,
+    };
+    let json = serde_json::to_string(&kind).unwrap();
+    let parsed: TransitionKind = serde_json::from_str(&json).unwrap();
+    assert_eq!(kind, parsed);
+}
+
+// ============================================================================
+// 18. Transition with kind JSON roundtrip
+// ============================================================================
+
+#[test]
+fn transition_with_kind_json_roundtrip() {
+    let mut values = HashMap::new();
+    values.insert("query".into(), "test query".into());
+
+    let transition = Transition {
+        from_url: "https://example.com/search".into(),
+        to_url: "https://example.com/results".into(),
+        label: "Search".into(),
+        kind: TransitionKind::FormSubmission {
+            form_id: "search".into(),
+            values,
+        },
+    };
+    let json = serde_json::to_string(&transition).unwrap();
+    let parsed: Transition = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.from_url, "https://example.com/search");
+    assert_eq!(parsed.to_url, "https://example.com/results");
+    assert_eq!(parsed.label, "Search");
+    assert!(matches!(parsed.kind, TransitionKind::FormSubmission { .. }));
+}
+
+// ============================================================================
+// 19. Transition backward compat — missing kind defaults to Link
+// ============================================================================
+
+#[test]
+fn transition_backward_compat() {
+    let json = r#"{"from_url":"https://a.com","to_url":"https://b.com","label":"Go"}"#;
+    let parsed: Transition = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed.kind, TransitionKind::Link);
+}
+
+// ============================================================================
+// 20. FlowStep::Navigate serde roundtrip
+// ============================================================================
+
+#[test]
+fn flow_step_navigate_serde() {
+    let step = FlowStep::Navigate {
+        url: "https://example.com/login".into(),
+    };
+    let json = serde_json::to_string(&step).unwrap();
+    let parsed: FlowStep = serde_json::from_str(&json).unwrap();
+    assert_eq!(step, parsed);
+}
+
+// ============================================================================
+// 21. FlowStep::FillAndSubmit serde roundtrip
+// ============================================================================
+
+#[test]
+fn flow_step_fill_serde() {
+    let mut values = HashMap::new();
+    values.insert("Email".into(), "user@example.com".into());
+
+    let step = FlowStep::FillAndSubmit {
+        url: "https://example.com/login".into(),
+        form_id: "login".into(),
+        values,
+        submit_label: Some("Sign In".into()),
+    };
+    let json = serde_json::to_string(&step).unwrap();
+    let parsed: FlowStep = serde_json::from_str(&json).unwrap();
+    assert_eq!(step, parsed);
+}
+
+// ============================================================================
+// 22. Flow serde roundtrip
+// ============================================================================
+
+#[test]
+fn flow_serde_roundtrip() {
+    let flow = Flow {
+        name: "Flow: Login -> Dashboard".into(),
+        steps: vec![
+            FlowStep::Navigate {
+                url: "https://example.com/login".into(),
+            },
+            FlowStep::FillAndSubmit {
+                url: "https://example.com/login".into(),
+                form_id: "login".into(),
+                values: HashMap::new(),
+                submit_label: Some("Sign In".into()),
+            },
+        ],
+    };
+    let json = serde_json::to_string(&flow).unwrap();
+    let parsed: Flow = serde_json::from_str(&json).unwrap();
+    assert_eq!(flow, parsed);
+}
+
+// ============================================================================
+// 23. ExplorerConfig form defaults
+// ============================================================================
+
+#[test]
+fn explorer_config_form_defaults() {
+    let config = ExplorerConfig::default();
+    assert!(config.explore_forms);
+    assert_eq!(config.max_forms_per_page, 3);
+}
+
+// ============================================================================
+// 24. ExplorerConfig form settings YAML roundtrip
+// ============================================================================
+
+#[test]
+fn explorer_config_form_yaml_roundtrip() {
+    let config = ExplorerConfig {
+        start_url: "https://example.com".into(),
+        max_pages: 5,
+        max_depth: 2,
+        same_origin_only: true,
+        explore_forms: false,
+        max_forms_per_page: 1,
+    };
+    let yaml = serde_yaml::to_string(&config).unwrap();
+    let parsed: ExplorerConfig = serde_yaml::from_str(&yaml).unwrap();
+    assert!(!parsed.explore_forms);
+    assert_eq!(parsed.max_forms_per_page, 1);
+}
+
+// ============================================================================
+// 25. detect_flows — empty AppMap → no flows
+// ============================================================================
+
+#[test]
+fn detect_flows_empty_map() {
+    let map = AppMap::new();
+    let flows = detect_flows(&map);
+    assert!(flows.is_empty());
+}
+
+// ============================================================================
+// 26. detect_flows — single form submission → 1 flow
+// ============================================================================
+
+#[test]
+fn detect_flows_single_form_submission() {
+    let mut map = AppMap::new();
+    map.add_page(PageNode {
+        url: "https://example.com/login".into(),
+        title: "Login".into(),
+        depth: 0,
+        page_model: sample_page_model(),
+    });
+    map.add_page(PageNode {
+        url: "https://example.com/dashboard".into(),
+        title: "Dashboard".into(),
+        depth: 1,
+        page_model: dashboard_page_model(),
+    });
+
+    let mut values = HashMap::new();
+    values.insert("Email".into(), "user@example.com".into());
+    values.insert("Password".into(), "TestPass123!".into());
+
+    map.add_transition(Transition {
+        from_url: "https://example.com/login".into(),
+        to_url: "https://example.com/dashboard".into(),
+        label: "Sign In".into(),
+        kind: TransitionKind::FormSubmission {
+            form_id: "login".into(),
+            values,
+        },
+    });
+
+    let flows = detect_flows(&map);
+    assert_eq!(flows.len(), 1);
+    assert_eq!(flows[0].steps.len(), 2); // Navigate + FillAndSubmit
+    assert!(matches!(&flows[0].steps[0], FlowStep::Navigate { url } if url == "https://example.com/login"));
+    assert!(matches!(&flows[0].steps[1], FlowStep::FillAndSubmit { form_id, .. } if form_id == "login"));
+}
+
+// ============================================================================
+// 27. detect_flows — chain A→B→C → 1 flow with 3 steps
+// ============================================================================
+
+#[test]
+fn detect_flows_chain() {
+    let mut map = AppMap::new();
+    map.add_page(PageNode {
+        url: "https://example.com/login".into(),
+        title: "Login".into(),
+        depth: 0,
+        page_model: sample_page_model(),
+    });
+    map.add_page(PageNode {
+        url: "https://example.com/dashboard".into(),
+        title: "Dashboard".into(),
+        depth: 1,
+        page_model: dashboard_page_model(),
+    });
+    map.add_page(PageNode {
+        url: "https://example.com/settings".into(),
+        title: "Settings".into(),
+        depth: 2,
+        page_model: settings_page_model(),
+    });
+
+    // Login → Dashboard (form submit)
+    map.add_transition(Transition {
+        from_url: "https://example.com/login".into(),
+        to_url: "https://example.com/dashboard".into(),
+        label: "Sign In".into(),
+        kind: TransitionKind::FormSubmission {
+            form_id: "login".into(),
+            values: HashMap::new(),
+        },
+    });
+
+    // Dashboard → Settings (form submit)
+    map.add_transition(Transition {
+        from_url: "https://example.com/dashboard".into(),
+        to_url: "https://example.com/settings".into(),
+        label: "Save".into(),
+        kind: TransitionKind::FormSubmission {
+            form_id: "profile".into(),
+            values: HashMap::new(),
+        },
+    });
+
+    let flows = detect_flows(&map);
+    assert_eq!(flows.len(), 1);
+    assert_eq!(flows[0].steps.len(), 3); // Navigate + 2 FillAndSubmit
+    assert!(matches!(&flows[0].steps[0], FlowStep::Navigate { .. }));
+    assert!(matches!(&flows[0].steps[1], FlowStep::FillAndSubmit { .. }));
+    assert!(matches!(&flows[0].steps[2], FlowStep::FillAndSubmit { .. }));
+}
+
+// ============================================================================
+// 28. detect_flows — link-only transitions → no flows
+// ============================================================================
+
+#[test]
+fn detect_flows_link_only_no_flow() {
+    let mut map = AppMap::new();
+    map.add_page(PageNode {
+        url: "https://example.com/a".into(),
+        title: "A".into(),
+        depth: 0,
+        page_model: sample_page_model(),
+    });
+    map.add_page(PageNode {
+        url: "https://example.com/b".into(),
+        title: "B".into(),
+        depth: 1,
+        page_model: search_page_model(),
+    });
+    map.add_transition(Transition {
+        from_url: "https://example.com/a".into(),
+        to_url: "https://example.com/b".into(),
+        label: "Go to B".into(),
+        kind: TransitionKind::Link,
+    });
+
+    let flows = detect_flows(&map);
+    assert!(flows.is_empty());
+}
+
+// ============================================================================
+// 29. generate_flow_tests — single flow → 1 TestSpec
+// ============================================================================
+
+#[test]
+fn generate_flow_test_single() {
+    let mut values = HashMap::new();
+    values.insert("Email".into(), "user@example.com".into());
+
+    let flows = vec![Flow {
+        name: "Flow: Login -> Dashboard".into(),
+        steps: vec![
+            FlowStep::Navigate {
+                url: "https://example.com/login".into(),
+            },
+            FlowStep::FillAndSubmit {
+                url: "https://example.com/login".into(),
+                form_id: "login".into(),
+                values,
+                submit_label: Some("Sign In".into()),
+            },
+        ],
+    }];
+
+    let specs = generate_flow_tests(&flows);
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0].name, "Flow: Login -> Dashboard");
+    assert_eq!(specs[0].start_url, "https://example.com/login");
+    assert_eq!(specs[0].steps.len(), 2);
+    assert!(matches!(&specs[0].steps[0], TestStep::Navigate { .. }));
+    assert!(matches!(&specs[0].steps[1], TestStep::FillAndSubmit { .. }));
+}
+
+// ============================================================================
+// 30. generate_test_plan includes flow tests
+// ============================================================================
+
+#[test]
+fn generate_test_plan_includes_flows() {
+    let mut map = AppMap::new();
+    map.add_page(PageNode {
+        url: "https://example.com/login".into(),
+        title: "Login".into(),
+        depth: 0,
+        page_model: sample_page_model(),
+    });
+    map.add_page(PageNode {
+        url: "https://example.com/dashboard".into(),
+        title: "Dashboard".into(),
+        depth: 1,
+        page_model: dashboard_page_model(),
+    });
+
+    let mut values = HashMap::new();
+    values.insert("Email".into(), "user@example.com".into());
+
+    map.add_transition(Transition {
+        from_url: "https://example.com/login".into(),
+        to_url: "https://example.com/dashboard".into(),
+        label: "Sign In".into(),
+        kind: TransitionKind::FormSubmission {
+            form_id: "login".into(),
+            values,
+        },
+    });
+
+    let specs = generate_test_plan(&map);
+
+    // Login page: 1 smoke + 1 form = 2
+    // Dashboard page: 1 smoke + 0 forms = 1
+    // Flows: 1 flow test
+    // Total: 4
+    let smoke_count = specs.iter().filter(|s| s.name.starts_with("Smoke:")).count();
+    let form_count = specs.iter().filter(|s| s.name.starts_with("Form:")).count();
+    let flow_count = specs.iter().filter(|s| s.name.starts_with("Flow:")).count();
+
+    assert_eq!(smoke_count, 2);
+    assert_eq!(form_count, 1);
+    assert_eq!(flow_count, 1);
+    assert_eq!(specs.len(), 4);
 }
