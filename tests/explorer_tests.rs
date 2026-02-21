@@ -36,6 +36,11 @@ fn login_screen() -> ScreenState {
                     tag: Some("input".into()),
                     role: Some("textbox".into()),
                     input_type: Some("email".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -43,6 +48,11 @@ fn login_screen() -> ScreenState {
                     tag: Some("input".into()),
                     role: Some("textbox".into()),
                     input_type: Some("password".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
             ],
             actions: vec![ScreenElement {
@@ -51,6 +61,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Sign In".into()),
@@ -58,6 +73,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }),
             intent: Some(FormIntent {
                 label: "Authentication".into(),
@@ -75,6 +95,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("a".into()),
                 role: Some("link".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             },
             ScreenElement {
                 label: Some("Forgot Password".into()),
@@ -82,6 +107,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("a".into()),
                 role: Some("link".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             },
         ],
         outputs: vec![],
@@ -101,6 +131,11 @@ fn search_screen() -> ScreenState {
                 tag: Some("input".into()),
                 role: Some("searchbox".into()),
                 input_type: Some("text".into()),
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             actions: vec![ScreenElement {
                 label: Some("Search".into()),
@@ -108,6 +143,11 @@ fn search_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Search".into()),
@@ -115,6 +155,11 @@ fn search_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }),
             intent: Some(FormIntent {
                 label: "Search".into(),
@@ -350,7 +395,7 @@ fn app_map_json_roundtrip() {
 }
 
 // ============================================================================
-// 7. explore() single page — login
+// 7. explore() single page â€” login
 // ============================================================================
 
 #[test]
@@ -373,7 +418,7 @@ fn explore_single_page_login() {
 }
 
 // ============================================================================
-// 8. explore() single page — search
+// 8. explore() single page â€” search
 // ============================================================================
 
 #[test]
@@ -496,7 +541,7 @@ fn generate_test_plan_full() {
 }
 
 // ============================================================================
-// 12. map_suggested_assertion — all supported types + unknown
+// 12. map_suggested_assertion â€” all supported types + unknown
 // ============================================================================
 
 #[test]
@@ -567,7 +612,7 @@ fn map_suggested_assertion_variants() {
         Some(AssertionSpec::ElementVisible { .. })
     ));
 
-    // unknown → None
+    // unknown â†’ None
     let sa = SuggestedAssertion {
         assertion_type: "some_future_type".into(),
         expected: "x".into(),
@@ -614,12 +659,12 @@ fn is_same_origin_check() {
         "https://example.com:9090/b"
     ));
 
-    // No scheme → returns false
+    // No scheme â†’ returns false
     assert!(!is_same_origin("example.com", "example.com"));
 }
 
 // ============================================================================
-// 14. resolve_url — absolute vs relative
+// 14. resolve_url â€” absolute vs relative
 // ============================================================================
 
 #[test]
@@ -727,7 +772,7 @@ fn transition_with_kind_json_roundtrip() {
 }
 
 // ============================================================================
-// 19. Transition backward compat — missing kind defaults to Link
+// 19. Transition backward compat â€” missing kind defaults to Link
 // ============================================================================
 
 #[test]
@@ -828,7 +873,7 @@ fn explorer_config_form_yaml_roundtrip() {
 }
 
 // ============================================================================
-// 25. detect_flows — empty AppMap → no flows
+// 25. detect_flows â€” empty AppMap â†’ no flows
 // ============================================================================
 
 #[test]
@@ -839,7 +884,7 @@ fn detect_flows_empty_map() {
 }
 
 // ============================================================================
-// 26. detect_flows — single form submission → 1 flow
+// 26. detect_flows â€” single form submission â†’ 1 flow
 // ============================================================================
 
 #[test]
@@ -880,7 +925,7 @@ fn detect_flows_single_form_submission() {
 }
 
 // ============================================================================
-// 27. detect_flows — chain A→B→C → 1 flow with 3 steps
+// 27. detect_flows â€” chain Aâ†’Bâ†’C â†’ 1 flow with 3 steps
 // ============================================================================
 
 #[test]
@@ -905,7 +950,7 @@ fn detect_flows_chain() {
         page_model: settings_page_model(),
     });
 
-    // Login → Dashboard (form submit)
+    // Login â†’ Dashboard (form submit)
     map.add_transition(Transition {
         from_url: "https://example.com/login".into(),
         to_url: "https://example.com/dashboard".into(),
@@ -916,7 +961,7 @@ fn detect_flows_chain() {
         },
     });
 
-    // Dashboard → Settings (form submit)
+    // Dashboard â†’ Settings (form submit)
     map.add_transition(Transition {
         from_url: "https://example.com/dashboard".into(),
         to_url: "https://example.com/settings".into(),
@@ -936,7 +981,7 @@ fn detect_flows_chain() {
 }
 
 // ============================================================================
-// 28. detect_flows — link-only transitions → no flows
+// 28. detect_flows â€” link-only transitions â†’ no flows
 // ============================================================================
 
 #[test]
@@ -966,7 +1011,7 @@ fn detect_flows_link_only_no_flow() {
 }
 
 // ============================================================================
-// 29. generate_flow_tests — single flow → 1 TestSpec
+// 29. generate_flow_tests â€” single flow â†’ 1 TestSpec
 // ============================================================================
 
 #[test]

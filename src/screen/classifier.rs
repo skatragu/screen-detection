@@ -150,6 +150,7 @@ fn label_for(el: &DomElement) -> Option<String> {
     el.aria_label
         .clone()
         .or_else(|| el.text.clone())
+        .or_else(|| el.placeholder.clone())
         .map(|s| s.trim().to_string())
 }
 
@@ -160,6 +161,11 @@ fn to_input(el: &DomElement) -> ScreenElement {
         tag: Some(el.tag.clone()),
         role: el.role.clone(),
         input_type: el.r#type.clone(),
+        required: el.required,
+        placeholder: el.placeholder.clone(),
+        id: el.id.clone(),
+        href: None,
+        options: el.options.clone(),
     }
 }
 
@@ -170,6 +176,11 @@ fn to_action(el: &DomElement) -> ScreenElement {
         tag: Some(el.tag.clone()),
         role: el.role.clone(),
         input_type: el.r#type.clone(),
+        required: false,
+        placeholder: None,
+        id: el.id.clone(),
+        href: el.href.clone(),
+        options: None,
     }
 }
 
@@ -180,5 +191,10 @@ fn to_output(el: &DomElement) -> ScreenElement {
         tag: Some(el.tag.clone()),
         role: el.role.clone(),
         input_type: el.r#type.clone(),
+        required: false,
+        placeholder: None,
+        id: el.id.clone(),
+        href: None,
+        options: None,
     }
 }

@@ -1,4 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// Option value for `<select>` elements.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct SelectOption {
+    pub value: String,
+    pub text: String,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DomElement {
@@ -12,6 +19,18 @@ pub struct DomElement {
     pub required: bool,
     #[serde(rename = "formId")]
     pub form_id: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub placeholder: Option<String>,
+    #[serde(default)]
+    pub href: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub options: Option<Vec<SelectOption>>,
 }
 
 #[derive(Debug)]
@@ -29,6 +48,11 @@ pub struct ScreenElement {
     pub tag: Option<String>,
     pub role: Option<String>,
     pub input_type: Option<String>,
+    pub required: bool,
+    pub placeholder: Option<String>,
+    pub id: Option<String>,
+    pub href: Option<String>,
+    pub options: Option<Vec<SelectOption>>,
 }
 
 #[derive(Debug, Clone)]

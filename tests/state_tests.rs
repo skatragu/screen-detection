@@ -47,7 +47,7 @@ fn normalize_output_text_normalizes_valid_text() {
 
 #[test]
 fn form_intent_scoring_boundaries() {
-    // No signals → Unknown, confidence 0.0
+    // No signals â†’ Unknown, confidence 0.0
     let plain_form = Form {
         id: "plain".into(),
         inputs: vec![ScreenElement {
@@ -56,6 +56,11 @@ fn form_intent_scoring_boundaries() {
             tag: Some("input".into()),
             role: None,
             input_type: Some("text".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         actions: vec![ScreenElement {
             label: Some("Submit".into()),
@@ -63,15 +68,20 @@ fn form_intent_scoring_boundaries() {
             tag: Some("button".into()),
             role: None,
             input_type: Some("submit".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         primary_action: None,
         intent: None,
     };
     let intent = infer_form_intent(&plain_form);
-    assert_eq!(intent.label, "Unknown", "No auth signals → Unknown");
-    assert_eq!(intent.confidence, 0.0, "No signals → 0.0 confidence");
+    assert_eq!(intent.label, "Unknown", "No auth signals â†’ Unknown");
+    assert_eq!(intent.confidence, 0.0, "No signals â†’ 0.0 confidence");
 
-    // Password only (score=0.4) → NOT > 0.4, so "Unknown"
+    // Password only (score=0.4) â†’ NOT > 0.4, so "Unknown"
     let password_form = Form {
         id: "pw".into(),
         inputs: vec![ScreenElement {
@@ -80,6 +90,11 @@ fn form_intent_scoring_boundaries() {
             tag: Some("input".into()),
             role: None,
             input_type: Some("password".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         actions: vec![ScreenElement {
             label: Some("Submit".into()),
@@ -87,6 +102,11 @@ fn form_intent_scoring_boundaries() {
             tag: Some("button".into()),
             role: None,
             input_type: Some("submit".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         primary_action: None,
         intent: None,
@@ -94,7 +114,7 @@ fn form_intent_scoring_boundaries() {
     let intent = infer_form_intent(&password_form);
     assert_eq!(intent.label, "Unknown", "score=0.4 is NOT > 0.4, so Unknown");
 
-    // Login action only (score=0.4) → "Unknown"
+    // Login action only (score=0.4) â†’ "Unknown"
     let login_form = Form {
         id: "login".into(),
         inputs: vec![ScreenElement {
@@ -103,6 +123,11 @@ fn form_intent_scoring_boundaries() {
             tag: Some("input".into()),
             role: None,
             input_type: Some("text".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         actions: vec![ScreenElement {
             label: Some("Login".into()),
@@ -110,14 +135,19 @@ fn form_intent_scoring_boundaries() {
             tag: Some("button".into()),
             role: None,
             input_type: Some("submit".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         primary_action: None,
         intent: None,
     };
     let intent = infer_form_intent(&login_form);
-    assert_eq!(intent.label, "Unknown", "Login action only → score=0.4 → Unknown");
+    assert_eq!(intent.label, "Unknown", "Login action only â†’ score=0.4 â†’ Unknown");
 
-    // Password + Sign In (score=0.8) → Authentication
+    // Password + Sign In (score=0.8) â†’ Authentication
     let auth_form = Form {
         id: "auth".into(),
         inputs: vec![ScreenElement {
@@ -126,6 +156,11 @@ fn form_intent_scoring_boundaries() {
             tag: Some("input".into()),
             role: None,
             input_type: Some("password".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         actions: vec![ScreenElement {
             label: Some("Sign In".into()),
@@ -133,11 +168,16 @@ fn form_intent_scoring_boundaries() {
             tag: Some("button".into()),
             role: None,
             input_type: Some("submit".into()),
+            required: false,
+            placeholder: None,
+            id: None,
+            href: None,
+            options: None,
         }],
         primary_action: None,
         intent: None,
     };
     let intent = infer_form_intent(&auth_form);
-    assert_eq!(intent.label, "Authentication", "Password + Sign In → Authentication");
+    assert_eq!(intent.label, "Authentication", "Password + Sign In â†’ Authentication");
     assert!(intent.confidence > 0.7, "Confidence should exceed 0.7");
 }

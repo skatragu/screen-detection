@@ -32,6 +32,10 @@ pub enum FieldType {
     Select,
     Checkbox,
     Radio,
+    Textarea,
+    Search,
+    Hidden,
+    Time,
     Other,
 }
 

@@ -2,6 +2,7 @@ use crate::{
     agent::agent_model::{
         AgentAction, AgentMemory, DecisionType, MIN_CONFIDENCE, ModelDecision, Policy,
     },
+    agent::page_model::PageCategory,
     canonical::diff::SemanticSignal,
     canonical::diff::SemanticStateDiff,
     state::state_model::ScreenState,
@@ -34,13 +35,62 @@ pub trait ModelBackend {
 
 pub struct DeterministicPolicy;
 
-/// Derive a sensible fill value from the input's label and type.
-pub fn guess_value(label: &str, input_type: Option<&str>) -> String {
+/// Derive a sensible fill value from the input's label, type, and page category.
+///
+/// When a `PageCategory` is provided, category-specific values are checked first
+/// (e.g., Login pages get "existing user" credentials, Registration pages get
+/// "new user" values). Falls through to generic label-based patterns if no
+/// category match is found.
+///
+/// Pattern ordering: specific before general (e.g., "card number" before "number",
+/// "first name" before "name", "confirm password" before "password").
+pub fn guess_value(label: &str, input_type: Option<&str>, category: Option<&PageCategory>) -> String {
     let l = label.to_lowercase();
 
-    // Label-based heuristics (checked in order)
+    // Category-specific overrides (checked first)
+    if let Some(cat) = category {
+        match cat {
+            PageCategory::Login => {
+                if l.contains("email") || l.contains("username") || l.contains("user") {
+                    return "testuser@example.com".into();
+                }
+                if l.contains("password") { return "TestPass123!".into(); }
+            }
+            PageCategory::Registration => {
+                if l.contains("confirm") && l.contains("password") { return "NewPass456!".into(); }
+                if l.contains("email") { return "newuser_test@example.com".into(); }
+                if l.contains("password") { return "NewPass456!".into(); }
+                if l.contains("username") || l.contains("user") { return "new_testuser".into(); }
+            }
+            PageCategory::Search => {
+                if l.contains("search") || l.contains("query") || l.contains("keyword") {
+                    return "test search query".into();
+                }
+            }
+            PageCategory::Checkout => {
+                if l.contains("card") && l.contains("number") { return "4111111111111111".into(); }
+                if l.contains("cvv") || l.contains("cvc") { return "123".into(); }
+                if l.contains("expir") { return "12/2028".into(); }
+                if l.contains("name") { return "Jane Doe".into(); }
+                if l.contains("address") || l.contains("street") { return "123 Main St".into(); }
+                if l.contains("city") { return "New York".into(); }
+                if l.contains("state") { return "NY".into(); }
+                if l.contains("zip") || l.contains("postal") { return "10001".into(); }
+            }
+            PageCategory::Settings => {
+                if l.contains("email") { return "updated@example.com".into(); }
+                if l.contains("name") { return "Jane Updated".into(); }
+            }
+            _ => {} // Fall through to generic patterns
+        }
+    }
+
+    // Label-based heuristics (checked in order — specific before general)
     if l.contains("email") {
         return "user@example.com".into();
+    }
+    if l.contains("confirm") && l.contains("password") {
+        return "TestPass123!".into();
     }
     if l.contains("password") {
         return "TestPass123!".into();
@@ -54,6 +104,39 @@ pub fn guess_value(label: &str, input_type: Option<&str>) -> String {
     if l.contains("zip") || l.contains("postal") {
         return "90210".into();
     }
+    if (l.contains("card") && l.contains("number")) || l.contains("credit") {
+        return "4111111111111111".into();
+    }
+    if l.contains("cvv") || l.contains("cvc") || l.contains("security code") {
+        return "123".into();
+    }
+    if l.contains("expir") || l.contains("exp date") {
+        return "12/2028".into();
+    }
+    if l.contains("street") || l.contains("address line") {
+        return "123 Test Street".into();
+    }
+    if l.contains("address") {
+        return "123 Test Street, Apt 1".into();
+    }
+    if l.contains("city") {
+        return "Springfield".into();
+    }
+    if l.contains("state") || l.contains("province") || l.contains("region") {
+        return "CA".into();
+    }
+    if l.contains("country") {
+        return "US".into();
+    }
+    if l.contains("company") || l.contains("organization") {
+        return "Acme Corp".into();
+    }
+    if l.contains("first") && l.contains("name") {
+        return "Jane".into();
+    }
+    if l.contains("last") && l.contains("name") || l.contains("surname") {
+        return "Doe".into();
+    }
     if l.contains("username") || l.contains("user") {
         return "testuser".into();
     }
@@ -63,8 +146,22 @@ pub fn guess_value(label: &str, input_type: Option<&str>) -> String {
     if l.contains("search") || l.contains("query") {
         return "test query".into();
     }
+    if l.contains("birthday") || l.contains("birth") || l.contains("dob") {
+        return "1990-01-15".into();
+    }
     if l.contains("date") {
         return "2025-01-15".into();
+    }
+    if l.contains("comment") || l.contains("message") || l.contains("description")
+        || l.contains("bio") || l.contains("notes")
+    {
+        return "This is a test comment.".into();
+    }
+    if l.contains("age") {
+        return "30".into();
+    }
+    if l.contains("time") {
+        return "10:30".into();
     }
     if l.contains("number") || l.contains("amount") || l.contains("quantity") {
         return "42".into();
@@ -79,6 +176,14 @@ pub fn guess_value(label: &str, input_type: Option<&str>) -> String {
             "url" => return "https://example.com".into(),
             "number" => return "42".into(),
             "date" => return "2025-01-15".into(),
+            "search" => return "test query".into(),
+            "time" => return "10:30".into(),
+            "month" => return "2025-01".into(),
+            "week" => return "2025-W03".into(),
+            "color" => return "#336699".into(),
+            "range" => return "50".into(),
+            "checkbox" => return "true".into(),
+            "radio" => return "option1".into(),
             _ => {}
         }
     }
@@ -104,7 +209,7 @@ impl Policy for DeterministicPolicy {
                     .iter()
                     .map(|input| {
                         let label = input.label.clone().unwrap_or_default();
-                        let value = guess_value(&label, input.input_type.as_deref());
+                        let value = guess_value(&label, input.input_type.as_deref(), None);
                         (label, value)
                     })
                     .collect();

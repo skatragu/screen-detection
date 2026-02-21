@@ -126,6 +126,36 @@ impl BrowserRequest {
         }
     }
 
+    pub fn select_option(selector: &SelectorHint, value: &str) -> Self {
+        BrowserRequest::Action {
+            cmd: "action",
+            action: "select".into(),
+            selector: Some(selector.clone()),
+            value: Some(value.to_string()),
+            duration_ms: None,
+        }
+    }
+
+    pub fn check(selector: &SelectorHint) -> Self {
+        BrowserRequest::Action {
+            cmd: "action",
+            action: "check".into(),
+            selector: Some(selector.clone()),
+            value: None,
+            duration_ms: None,
+        }
+    }
+
+    pub fn uncheck(selector: &SelectorHint) -> Self {
+        BrowserRequest::Action {
+            cmd: "action",
+            action: "uncheck".into(),
+            selector: Some(selector.clone()),
+            value: None,
+            duration_ms: None,
+        }
+    }
+
     pub fn quit() -> Self {
         BrowserRequest::Quit { cmd: "quit" }
     }
@@ -339,6 +369,27 @@ impl BrowserSession {
         let request = BrowserRequest::query_count(selector);
         let response = self.send_ok(&request, "query_count")?;
         Ok(response.count.unwrap_or(0))
+    }
+
+    /// Select an option in a dropdown element.
+    pub fn select_option(&mut self, selector: &SelectorHint, value: &str) -> Result<(), AgentError> {
+        let request = BrowserRequest::select_option(selector, value);
+        self.send_ok(&request, "select_option")?;
+        Ok(())
+    }
+
+    /// Check a checkbox element.
+    pub fn check(&mut self, selector: &SelectorHint) -> Result<(), AgentError> {
+        let request = BrowserRequest::check(selector);
+        self.send_ok(&request, "check")?;
+        Ok(())
+    }
+
+    /// Uncheck a checkbox element.
+    pub fn uncheck(&mut self, selector: &SelectorHint) -> Result<(), AgentError> {
+        let request = BrowserRequest::uncheck(selector);
+        self.send_ok(&request, "uncheck")?;
+        Ok(())
     }
 
     /// Get the last known URL (cached, no browser call).

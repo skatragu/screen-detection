@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::agent::error::AgentError;
 use crate::agent::page_analyzer::{MockPageAnalyzer, PageAnalyzer};
-use crate::agent::page_model::FormModel;
+use crate::agent::page_model::{FieldType, FormModel};
 use crate::browser::playwright::SelectorHint;
 use crate::browser::session::BrowserSession;
 use crate::state::state_model::ScreenState;
@@ -210,7 +210,11 @@ fn submit_form_in_session(
             input_type: None,
             form_id: Some(form.form_id.clone()),
         };
-        session.fill(&selector, &field.suggested_test_value)?;
+        match field.field_type {
+            FieldType::Select => session.select_option(&selector, &field.suggested_test_value)?,
+            FieldType::Checkbox => session.check(&selector)?,
+            _ => session.fill(&selector, &field.suggested_test_value)?,
+        }
     }
 
     if let Some(label) = &form.submit_label {

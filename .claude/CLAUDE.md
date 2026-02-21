@@ -37,11 +37,13 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Multi-layer gating**: Agent actions must pass confidence threshold (0.65), loop suppression (max 2 repeats), budget checks (5 think / 3 retry / 2 loop), and terminal-success gates before execution. Loop budget resets to 5 on signal detection.
 - **Pluggable inference**: `ModelBackend` trait with `OllamaBackend` (qwen2.5:1.5b at localhost:11434), `MockBackend` (deterministic, for tests), plus `DeterministicPolicy` (rule-based with `guess_value()` heuristics) and `HybridPolicy` (combines deterministic + model). Agent uses `Box<dyn Policy>` and can be constructed with `Agent::with_deterministic()`, `Agent::with_hybrid()`, `Agent::with_mock()`, `Agent::with_policy()`.
 - **AI page understanding (hybrid enrichment)**: `PageAnalyzer` trait with `MockPageAnalyzer` (rule-based) and `LlmPageAnalyzer` (LLM-backed via `TextInference` trait). `LlmPageAnalyzer` uses a simplified prompt (~120 words) asking for only `purpose` and `category`, then builds the full `PageModel` deterministically via `MockPageAnalyzer`. LLM output is parsed via `try_parse_llm_response()` with 4-stage JSON recovery (direct parse → strip markdown fences → fix trailing commas → extract JSON substring). Category strings are normalized via `map_llm_category()` (case-insensitive with aliases). Never fails — always produces a valid `PageModel`.
-- **Field type classification**: `classify_field_type(input_type, label)` maps HTML input types and label keywords to semantic `FieldType` (Email, Password, Number, Date, Tel, Url, Checkbox, Radio, Select, Text). Used by `MockPageAnalyzer` to enrich form analysis.
-- **Smart form filling**: `guess_value(label, input_type)` derives sensible values from input labels (email → `user@example.com`, password → `TestPass123!`, search/query → `test query`, etc.) with fallback to input_type and final fallback `"test"`. `DeterministicPolicy` uses `FillAndSubmitForm` to fill all inputs + submit in one agent step.
+- **Richer DOM extraction**: `DomElement` has 6 additional optional fields (id, name, placeholder, href, value, options); `ScreenElement` has 5 additional fields (required, placeholder, id, href, options). `SelectOption { value, text }` type for `<select>` dropdown options. `label_for()` uses placeholder as fallback after aria_label and text.
+- **Field type classification**: `classify_field_type(input_type, label, tag)` maps HTML input types, label keywords, and tag names to semantic `FieldType` (15 variants: Text, Email, Password, Number, Date, Tel, Url, Select, Checkbox, Radio, Textarea, Search, Hidden, Time, Other). Tag parameter enables `<textarea>` and `<select>` detection. Used by `MockPageAnalyzer` to enrich form analysis.
+- **Smart form filling**: `guess_value(label, input_type, category)` derives sensible values from ~26 label patterns (email, password, name, address, phone, card number, CVV, city, state, country, company, birthday, etc.) with input_type fallbacks (search, time, month, week, color, range, checkbox, radio) and final fallback `"test"`. When `PageCategory` is provided, returns context-aware values: Login → existing user credentials, Registration → new user values, Search → meaningful queries, Checkout → billing data, Settings → update values. `DeterministicPolicy` uses `FillAndSubmitForm` to fill all inputs + submit in one agent step.
+- **Enhanced browser interaction**: `select_option`, `check`, `uncheck` commands in the NDJSON browser protocol enable dropdown selection, checkbox toggling, and radio button interaction. `submit_form_in_session()` dispatches to the appropriate interaction method based on `FieldType` (Select → select_option, Checkbox → check, others → fill).
 - **Agent state machine**: Deterministic progression Observe -> Evaluate -> Think -> Act -> (back to Observe or Stop).
 - **Dual browser modes**: Subprocess mode (`execute_action` via interact.js, fresh browser per action) for backward compatibility; Session mode (`execute_action_session` via `BrowserSession`/browser_server.js, persistent browser) for multi-page flows.
-- **NDJSON session protocol**: `BrowserSession` communicates with `browser_server.js` via newline-delimited JSON over stdin/stdout. Commands: navigate, extract, action (fill/click/wait), screenshot, current_url, query_text, query_visible, query_count, quit.
+- **NDJSON session protocol**: `BrowserSession` communicates with `browser_server.js` via newline-delimited JSON over stdin/stdout. Commands: navigate, extract, action (fill/click/wait/select/check/uncheck), screenshot, current_url, query_text, query_visible, query_count, quit.
 - **CSS selector queries**: Element assertions (ElementText, ElementVisible, ElementCount) use raw CSS selectors (`#id`, `.class`, `tag`) via browser query commands, separate from the semantic `SelectorHint` used for agent interactions.
 - **Autonomous exploration**: `ExplorerConfig` controls BFS crawling (max_pages, max_depth, same_origin_only, explore_forms, max_forms_per_page). `explore()` for offline single-page analysis, `explore_live()` for multi-page BFS via `BrowserSession`. Builds `AppMap` graph of `PageNode`s + `Transition`s. Form-aware: fills/submits forms during crawling to discover post-submit pages (dashboards, search results).
 - **Transition tracking**: `TransitionKind` enum (`Link` | `FormSubmission { form_id, values }`) tracks how each page transition was triggered. Defaults to `Link` for backward compatibility via `#[serde(default)]`.
@@ -66,9 +68,9 @@ Raw DOM (JSON from Playwright/Node.js)
 
 ```bash
 cargo build
-cargo test                       # 159 offline tests (fast, no browser needed)
+cargo test                       # 189 offline tests (fast, no browser needed)
 cargo test -- --ignored          # 28 integration tests (requires Node.js + Playwright; 5 LLM tests need Ollama)
-cargo test -- --include-ignored  # all 187 tests
+cargo test -- --include-ignored  # all 217 tests
 ```
 
 - Rust edition 2024
@@ -76,13 +78,13 @@ cargo test -- --include-ignored  # all 187 tests
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 187 tests total: 159 offline + 28 integration (real browser via `#[ignore]`)
-- 159 offline tests split across module-based test files:
-  - `tests/agent_tests.rs` (30) — agent behavior, policy logic, guess_value heuristics, budget gating, error handling
-  - `tests/browser_tests.rs` (24) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol
+- 217 tests total: 189 offline + 28 integration (real browser via `#[ignore]`)
+- 189 offline tests split across module-based test files:
+  - `tests/agent_tests.rs` (44) — agent behavior, policy logic, guess_value heuristics (generic + intent-based), budget gating, error handling
+  - `tests/browser_tests.rs` (29) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol, select/check/uncheck serialization, DomElement/SelectOption serde
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
   - `tests/explorer_tests.rs` (30) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url
-  - `tests/page_model_tests.rs` (30) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer, LlmPageAnalyzer hybrid enrichment, JSON recovery (try_parse), category mapping, prompt construction, field classification, navigation targets
+  - `tests/page_model_tests.rs` (41) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer (required, select options, login values), LlmPageAnalyzer hybrid enrichment + field_values override, JSON recovery (try_parse), category mapping, prompt construction, field classification (input types, tags, labels), navigation targets
   - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
   - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
@@ -107,7 +109,8 @@ cargo test -- --include-ignored  # all 187 tests
 - `BrowserResult`: success, error — returned from interact.js (subprocess mode)
 - `BrowserRequest`: Navigate, Extract, Action, Screenshot, CurrentUrl, QueryText, QueryVisible, QueryCount, Quit — NDJSON commands to browser_server.js (session mode)
 - `BrowserResponse`: ok, error, data, url, ready, text, visible, count — NDJSON responses from browser_server.js (session mode)
-- `BrowserSession`: child, stdin, reader, current_url — persistent browser session backed by browser_server.js
+- `BrowserSession`: child, stdin, reader, current_url — persistent browser session backed by browser_server.js; methods: navigate, extract, fill, click, wait_idle, screenshot, current_url, query_text, query_visible, query_count, select_option, check, uncheck, quit
+- `SelectOption`: value, text — dropdown option for `<select>` elements
 - `ScreenState`: url, title, forms, standalone_actions, outputs, identities
 - `Outcome`: NoChange, FormSubmissionSucceeded, FormSubmissionFailed, Navigation, Unknown
 - `OutputRegion`: Header, Main, Results, Footer, Modal, Unknown
@@ -126,11 +129,11 @@ cargo test -- --include-ignored  # all 187 tests
 - `PageCategory`: Login, Registration, Search, Dashboard, Settings, Listing, Detail, Checkout, Error, Other — page classification enum
 - `FormModel`: form_id, purpose, fields (Vec<FieldModel>), submit_label — AI understanding of a form
 - `FieldModel`: label, field_type (FieldType), required, suggested_test_value — single form field with AI-suggested test value
-- `FieldType`: Text, Email, Password, Number, Date, Tel, Url, Select, Checkbox, Radio, Other — semantic field classification
+- `FieldType`: Text, Email, Password, Number, Date, Tel, Url, Select, Checkbox, Radio, Textarea, Search, Hidden, Time, Other — semantic field classification (15 variants)
 - `PageAnalyzer` trait: `analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError>` — pluggable page analysis
 - `TextInference` trait: `infer_text(&self, prompt: &str) -> Option<String>` — generic text-in/text-out LLM interface
 - `MockTextInference`: canned response for deterministic testing of LlmPageAnalyzer
-- `LlmPageResponse`: purpose (Option), category (Option) — lightweight struct for parsing LLM output; used by `try_parse_llm_response()`
+- `LlmPageResponse`: purpose (Option), category (Option), field_values (Option<HashMap<String, String>>) — lightweight struct for parsing LLM output; used by `try_parse_llm_response()`; field_values enables LLM-suggested form values that override deterministic defaults
 - `ExplorerConfig`: start_url, max_pages (10), max_depth (3), same_origin_only (true), explore_forms (true), max_forms_per_page (3) — controls autonomous BFS crawling with form-aware exploration
 - `PageNode`: url, title, depth, page_model (PageModel) — single discovered page in the AppMap
 - `TransitionKind`: Link | FormSubmission { form_id, values } — how a page transition was triggered; defaults to Link via serde
@@ -150,7 +153,7 @@ src/
     mod.rs            -- Module exports
     agent.rs          -- State machine, gating, execute_action(), execute_action_session(), emit_observed_actions()
     agent_model.rs    -- AgentState, AgentAction (incl. FillAndSubmitForm, NavigateTo), AgentMemory, ModelDecision, Policy trait
-    ai_model.rs       -- OllamaBackend (env-var config, temperature/top_p/top_k), MockBackend, DeterministicPolicy, HybridPolicy, guess_value(), prompt construction, TextInference trait, MockTextInference
+    ai_model.rs       -- OllamaBackend (env-var config, temperature/top_p/top_k), MockBackend, DeterministicPolicy, HybridPolicy, guess_value(label, input_type, category) with ~26 patterns + PageCategory-aware filling, prompt construction, TextInference trait, MockTextInference
     budget.rs         -- Budget check (think/retry/loop)
     error.rs          -- AgentError enum (10 variants), Display, std::error::Error impls
     page_model.rs     -- PageModel, PageCategory, FormModel, FieldModel, FieldType, OutputModel, SuggestedAssertion, NavigationTarget
@@ -158,7 +161,7 @@ src/
   browser/
     mod.rs            -- Module exports
     playwright.rs     -- DOM extraction (returns Result), SelectorHint, BrowserCommand, BrowserResult, execute_browser_action()
-    session.rs        -- BrowserSession (persistent browser via NDJSON), BrowserRequest, BrowserResponse, query_text/query_visible/query_count for element assertions
+    session.rs        -- BrowserSession (persistent browser via NDJSON), BrowserRequest, BrowserResponse, query_text/query_visible/query_count for element assertions, select_option/check/uncheck for form interaction
   canonical/
     mod.rs            -- Module exports
     canonical_model.rs -- CanonicalScreenState, canonicalize()
@@ -167,7 +170,7 @@ src/
     mod.rs            -- Module exports
     classifier.rs     -- classify() DOM -> ScreenSemantics
     intent.rs         -- infer_form_intent() heuristic scoring
-    screen_model.rs   -- DomElement, Form, ScreenElement, FormIntent, ElementKind
+    screen_model.rs   -- DomElement (with id, name, placeholder, href, value, options), SelectOption, Form, ScreenElement (with required, placeholder, id, href, options), FormIntent, ElementKind
   state/
     mod.rs            -- Module exports
     state_builder.rs  -- build_state(), resolve_identities()
@@ -197,11 +200,11 @@ src/
     trace.rs          -- TraceEvent builder
     logger.rs         -- JSONL file logger (Mutex<File>), gracefully degrades if file unavailable
 tests/
-  agent_tests.rs      -- 30 tests: agent behavior, policy, guess_value, budget, errors
-  browser_tests.rs    -- 24 tests: BrowserRequest/Response serde, session errors, query protocol
+  agent_tests.rs      -- 44 tests: agent behavior, policy, guess_value (generic + intent-based), budget, errors
+  browser_tests.rs    -- 29 tests: BrowserRequest/Response serde, session errors, query protocol, select/check/uncheck, DomElement/SelectOption
   canonical_tests.rs  -- 12 tests: classification, diffing, signals
   explorer_tests.rs   -- 30 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow), URL utilities
-  page_model_tests.rs -- 30 tests: PageModel serde, MockPageAnalyzer, LlmPageAnalyzer hybrid enrichment, JSON recovery, category mapping, prompt construction, field classification
+  page_model_tests.rs -- 41 tests: PageModel serde, MockPageAnalyzer (required, select options, login values), LlmPageAnalyzer hybrid enrichment + field_values, JSON recovery, category mapping, prompt construction, field classification (types, tags, labels)
   report_tests.rs     -- 15 tests: TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
   state_tests.rs      -- 3 tests: normalize, form intent scoring
@@ -217,5 +220,5 @@ tests/
 
 - `extract.js` — Launches Playwright, navigates to URL, extracts DOM as JSON (elements with tag, id, text, attributes, children). Stateless: fresh browser per call.
 - `interact.js` — Receives a BrowserCommand JSON arg, launches Playwright, executes fill/click/wait actions using SelectorHint for element targeting. Stateless: fresh browser per call.
-- `browser_server.js` — Long-lived NDJSON server. Launches Playwright once, accepts commands over stdin, returns responses to stdout. Supports: navigate, extract, action (fill/click/wait), screenshot, current_url, query_text, query_visible, query_count, quit. Used by `BrowserSession` in Rust for persistent multi-page sessions.
+- `browser_server.js` — Long-lived NDJSON server. Launches Playwright once, accepts commands over stdin, returns responses to stdout. Supports: navigate, extract, action (fill/click/wait/select/check/uncheck), screenshot, current_url, query_text, query_visible, query_count, quit. Extracts DOM with 14 fields per element (tag, text, role, type, ariaLabel, disabled, required, formId, id, name, placeholder, href, value, options). Used by `BrowserSession` in Rust for persistent multi-page sessions.
 - Playwright dependency: `^1.58.2`

@@ -5,7 +5,7 @@ use screen_detection::{
     },
     screen::{
         classifier::classify,
-        screen_model::{DomElement, ElementKind},
+        screen_model::DomElement,
     },
 };
 
@@ -25,6 +25,12 @@ fn classifier_populates_screen_element_fields() {
             disabled: false,
             required: false,
             form_id: Some("search".into()),
+            id: None,
+            name: None,
+            placeholder: None,
+            href: None,
+            value: None,
+            options: None,
         },
         DomElement {
             tag: "button".into(),
@@ -35,6 +41,12 @@ fn classifier_populates_screen_element_fields() {
             disabled: false,
             required: false,
             form_id: Some("search".into()),
+            id: None,
+            name: None,
+            placeholder: None,
+            href: None,
+            value: None,
+            options: None,
         },
         DomElement {
             tag: "div".into(),
@@ -45,6 +57,12 @@ fn classifier_populates_screen_element_fields() {
             disabled: false,
             required: false,
             form_id: None,
+            id: None,
+            name: None,
+            placeholder: None,
+            href: None,
+            value: None,
+            options: None,
         },
     ];
 
@@ -339,4 +357,110 @@ fn test_browser_response_with_text_null() {
     let resp: BrowserResponse = serde_json::from_str(json).expect("parse");
     assert!(resp.ok);
     assert_eq!(resp.text, None);
+}
+
+// =========================================================================
+// New: BrowserRequest select/check/uncheck serialization
+// =========================================================================
+
+#[test]
+fn browser_request_select_option_serialization() {
+    let selector = SelectorHint {
+        role: None,
+        name: Some("Country".into()),
+        tag: Some("select".into()),
+        input_type: None,
+        form_id: Some("address".into()),
+    };
+    let request = BrowserRequest::select_option(&selector, "us");
+    let json: serde_json::Value = serde_json::to_value(&request).unwrap();
+
+    assert_eq!(json["cmd"], "action");
+    assert_eq!(json["action"], "select");
+    assert_eq!(json["value"], "us");
+    assert_eq!(json["selector"]["name"], "Country");
+    assert_eq!(json["selector"]["tag"], "select");
+}
+
+#[test]
+fn browser_request_check_serialization() {
+    let selector = SelectorHint {
+        role: Some("checkbox".into()),
+        name: Some("Terms".into()),
+        tag: Some("input".into()),
+        input_type: Some("checkbox".into()),
+        form_id: None,
+    };
+    let request = BrowserRequest::check(&selector);
+    let json: serde_json::Value = serde_json::to_value(&request).unwrap();
+
+    assert_eq!(json["cmd"], "action");
+    assert_eq!(json["action"], "check");
+    assert!(json.get("value").is_none() || json["value"].is_null());
+}
+
+#[test]
+fn browser_request_uncheck_serialization() {
+    let selector = SelectorHint {
+        role: Some("checkbox".into()),
+        name: Some("Newsletter".into()),
+        tag: Some("input".into()),
+        input_type: Some("checkbox".into()),
+        form_id: None,
+    };
+    let request = BrowserRequest::uncheck(&selector);
+    let json: serde_json::Value = serde_json::to_value(&request).unwrap();
+
+    assert_eq!(json["cmd"], "action");
+    assert_eq!(json["action"], "uncheck");
+}
+
+// =========================================================================
+// New: DomElement with new fields deserialization
+// =========================================================================
+
+#[test]
+fn dom_element_new_fields_deserialization() {
+    let json = r#"{
+        "tag": "select",
+        "text": null,
+        "role": null,
+        "type": null,
+        "ariaLabel": "Country",
+        "disabled": false,
+        "required": true,
+        "formId": "address",
+        "id": "country-select",
+        "name": "country",
+        "placeholder": null,
+        "href": null,
+        "value": "us",
+        "options": [
+            {"value": "us", "text": "United States"},
+            {"value": "ca", "text": "Canada"}
+        ]
+    }"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.tag, "select");
+    assert_eq!(el.id, Some("country-select".into()));
+    assert_eq!(el.name, Some("country".into()));
+    assert_eq!(el.value, Some("us".into()));
+    assert!(el.required);
+    let opts = el.options.unwrap();
+    assert_eq!(opts.len(), 2);
+    assert_eq!(opts[0].value, "us");
+    assert_eq!(opts[0].text, "United States");
+}
+
+#[test]
+fn select_option_serde_roundtrip() {
+    use screen_detection::screen::screen_model::SelectOption;
+
+    let opt = SelectOption {
+        value: "val1".into(),
+        text: "Option One".into(),
+    };
+    let json = serde_json::to_string(&opt).unwrap();
+    let back: SelectOption = serde_json::from_str(&json).unwrap();
+    assert_eq!(opt, back);
 }

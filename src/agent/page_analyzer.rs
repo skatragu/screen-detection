@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::agent::ai_model::{MockTextInference, TextInference, guess_value};
 use crate::agent::error::AgentError;
 use crate::agent::page_model::{
@@ -20,9 +21,19 @@ pub trait PageAnalyzer {
 // Field type classification
 // ============================================================================
 
-/// Classify a field's semantic type from its input_type and label.
-pub fn classify_field_type(input_type: Option<&str>, label: Option<&str>) -> FieldType {
-    // First check input_type (most reliable signal)
+/// Classify a field's semantic type from its input_type, label, and HTML tag.
+pub fn classify_field_type(input_type: Option<&str>, label: Option<&str>, tag: Option<&str>) -> FieldType {
+    // Check HTML tag first (textarea has no type attribute)
+    if let Some(t) = tag {
+        if t == "textarea" {
+            return FieldType::Textarea;
+        }
+        if t == "select" {
+            return FieldType::Select;
+        }
+    }
+
+    // Check input_type (most reliable signal for <input>)
     if let Some(t) = input_type {
         match t {
             "email" => return FieldType::Email,
@@ -34,6 +45,10 @@ pub fn classify_field_type(input_type: Option<&str>, label: Option<&str>) -> Fie
             "checkbox" => return FieldType::Checkbox,
             "radio" => return FieldType::Radio,
             "select" | "select-one" | "select-multiple" => return FieldType::Select,
+            "search" => return FieldType::Search,
+            "time" => return FieldType::Time,
+            "hidden" => return FieldType::Hidden,
+            "color" | "range" | "file" | "month" | "week" => return FieldType::Other,
             _ => {}
         }
     }
@@ -58,6 +73,13 @@ pub fn classify_field_type(input_type: Option<&str>, label: Option<&str>) -> Fie
         }
         if lower.contains("number") || lower.contains("amount") || lower.contains("quantity") {
             return FieldType::Number;
+        }
+        if lower.contains("search") || lower.contains("query") {
+            return FieldType::Search;
+        }
+        if lower.contains("comment") || lower.contains("message") || lower.contains("description")
+            || lower.contains("bio") || lower.contains("notes") {
+            return FieldType::Textarea;
         }
     }
 
@@ -169,14 +191,22 @@ impl PageAnalyzer for MockPageAnalyzer {
                     .map(|input| {
                         let label = input.label.clone().unwrap_or_default();
                         let field_type =
-                            classify_field_type(input.input_type.as_deref(), Some(&label));
-                        let suggested_test_value =
-                            guess_value(&label, input.input_type.as_deref());
+                            classify_field_type(input.input_type.as_deref(), Some(&label), input.tag.as_deref());
+
+                        // For selects with options, use first option value; otherwise guess_value
+                        let suggested_test_value = if field_type == FieldType::Select {
+                            input.options.as_ref()
+                                .and_then(|opts| opts.first())
+                                .map(|o| o.value.clone())
+                                .unwrap_or_else(|| guess_value(&label, input.input_type.as_deref(), Some(&category)))
+                        } else {
+                            guess_value(&label, input.input_type.as_deref(), Some(&category))
+                        };
 
                         FieldModel {
                             label,
                             field_type,
-                            required: false, // Not tracked in ScreenElement currently
+                            required: input.required,
                             suggested_test_value,
                         }
                     })
@@ -260,6 +290,8 @@ pub struct LlmPageResponse {
     pub purpose: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    pub field_values: Option<HashMap<String, String>>,
 }
 
 /// Attempt to fix common JSON issues from small LLM output.
@@ -391,11 +423,14 @@ Page:
 
 Categories: Login, Search, Dashboard, Error, Form, Other
 
+If forms are present, suggest test values:
+"field_values":{{"Email":"test@example.com","Password":"pass123"}}
+
 Example:
 Page with title "Sign In", form with email+password fields, "Log In" button.
-{{"purpose":"User login page","category":"Login"}}
+{{"purpose":"User login page","category":"Login","field_values":{{"Email":"user@test.com","Password":"Test123!"}}}}
 
-Now analyze the page above. Return ONLY JSON:{{"purpose":"...","category":"..."}}"#,
+Return ONLY JSON:{{"purpose":"...","category":"...","field_values":{{...}}}}"#,
             url = screen.url.as_deref().unwrap_or("unknown"),
             title = screen.title,
             forms = if forms_summary.is_empty() {
@@ -416,17 +451,18 @@ impl PageAnalyzer for LlmPageAnalyzer {
     fn analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError> {
         let prompt = Self::build_page_prompt(screen);
 
-        // Try to get LLM-provided purpose and category
-        let (llm_purpose, llm_category) = match self.backend.infer_text(&prompt) {
+        // Try to get LLM-provided purpose, category, and field values
+        let (llm_purpose, llm_category, llm_field_values) = match self.backend.infer_text(&prompt) {
             Some(response) => match try_parse_llm_response(&response) {
                 Some(parsed) => {
                     let purpose = parsed.purpose;
                     let category = parsed.category.map(|c| map_llm_category(&c));
-                    (purpose, category)
+                    let field_values = parsed.field_values;
+                    (purpose, category, field_values)
                 }
-                None => (None, None),
+                None => (None, None, None),
             },
-            None => (None, None),
+            None => (None, None, None),
         };
 
         // Build the base model deterministically (always succeeds)
@@ -440,6 +476,19 @@ impl PageAnalyzer for LlmPageAnalyzer {
         }
         if let Some(category) = llm_category {
             model.category = category;
+        }
+
+        // Enrich field values from LLM if available
+        if let Some(field_values) = llm_field_values {
+            for form in &mut model.forms {
+                for field in &mut form.fields {
+                    if let Some(llm_value) = field_values.get(&field.label) {
+                        if !llm_value.is_empty() {
+                            field.suggested_test_value = llm_value.clone();
+                        }
+                    }
+                }
+            }
         }
 
         Ok(model)

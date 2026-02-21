@@ -30,6 +30,11 @@ fn login_screen() -> ScreenState {
                     tag: Some("input".into()),
                     role: Some("textbox".into()),
                     input_type: Some("email".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -37,6 +42,11 @@ fn login_screen() -> ScreenState {
                     tag: Some("input".into()),
                     role: Some("textbox".into()),
                     input_type: Some("password".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
             ],
             actions: vec![ScreenElement {
@@ -45,6 +55,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Sign In".into()),
@@ -52,6 +67,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }),
             intent: Some(FormIntent {
                 label: "Authentication".into(),
@@ -69,6 +89,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("a".into()),
                 role: Some("link".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             },
             ScreenElement {
                 label: Some("Forgot Password".into()),
@@ -76,6 +101,11 @@ fn login_screen() -> ScreenState {
                 tag: Some("a".into()),
                 role: Some("link".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             },
         ],
         outputs: vec![],
@@ -95,6 +125,11 @@ fn search_screen() -> ScreenState {
                 tag: Some("input".into()),
                 role: Some("searchbox".into()),
                 input_type: Some("text".into()),
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             actions: vec![ScreenElement {
                 label: Some("Search".into()),
@@ -102,6 +137,11 @@ fn search_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Search".into()),
@@ -109,6 +149,11 @@ fn search_screen() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }),
             intent: Some(FormIntent {
                 label: "Search".into(),
@@ -252,7 +297,7 @@ fn field_type_serde() {
 }
 
 // ============================================================================
-// 5. MockPageAnalyzer: login page → category=Login, correct fields
+// 5. MockPageAnalyzer: login page â†’ category=Login, correct fields
 // ============================================================================
 
 #[test]
@@ -270,10 +315,10 @@ fn mock_analyzer_login_page() {
     assert_eq!(form.fields.len(), 2);
     assert_eq!(form.submit_label, Some("Sign In".into()));
 
-    // Email field
+    // Email field — Login category produces "testuser@example.com"
     assert_eq!(form.fields[0].label, "Email");
     assert_eq!(form.fields[0].field_type, FieldType::Email);
-    assert_eq!(form.fields[0].suggested_test_value, "user@example.com");
+    assert_eq!(form.fields[0].suggested_test_value, "testuser@example.com");
 
     // Password field
     assert_eq!(form.fields[1].label, "Password");
@@ -282,7 +327,7 @@ fn mock_analyzer_login_page() {
 }
 
 // ============================================================================
-// 6. MockPageAnalyzer: search page → category=Search, correct fields
+// 6. MockPageAnalyzer: search page â†’ category=Search, correct fields
 // ============================================================================
 
 #[test]
@@ -298,12 +343,12 @@ fn mock_analyzer_search_page() {
     assert_eq!(form.form_id, "search");
     assert_eq!(form.fields.len(), 1);
     assert_eq!(form.fields[0].label, "Search query");
-    assert_eq!(form.fields[0].suggested_test_value, "test query");
+    assert_eq!(form.fields[0].suggested_test_value, "test search query"); // Search category overrides
     assert_eq!(form.submit_label, Some("Search".into()));
 }
 
 // ============================================================================
-// 7. MockPageAnalyzer: empty page → category=Other, no forms
+// 7. MockPageAnalyzer: empty page â†’ category=Other, no forms
 // ============================================================================
 
 #[test]
@@ -321,7 +366,7 @@ fn mock_analyzer_empty_page() {
 }
 
 // ============================================================================
-// 8. LlmPageAnalyzer: valid JSON response → hybrid enrichment
+// 8. LlmPageAnalyzer: valid JSON response â†’ hybrid enrichment
 // ============================================================================
 
 #[test]
@@ -342,7 +387,7 @@ fn llm_analyzer_valid_response() {
     assert_eq!(model.forms[0].form_id, "login");
     assert_eq!(model.forms[0].fields[0].label, "Email");
     assert_eq!(model.forms[0].fields[0].field_type, FieldType::Email);
-    assert_eq!(model.forms[0].fields[0].suggested_test_value, "user@example.com"); // from guess_value()
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "testuser@example.com"); // from guess_value() with Login category
     assert_eq!(model.forms[0].fields[1].label, "Password");
     assert_eq!(model.forms[0].fields[1].field_type, FieldType::Password);
     assert_eq!(model.forms[0].submit_label, Some("Sign In".into()));
@@ -353,7 +398,7 @@ fn llm_analyzer_valid_response() {
 }
 
 // ============================================================================
-// 9. LlmPageAnalyzer: empty response → falls back to MockPageAnalyzer
+// 9. LlmPageAnalyzer: empty response â†’ falls back to MockPageAnalyzer
 // ============================================================================
 
 #[test]
@@ -369,7 +414,7 @@ fn llm_analyzer_empty_response() {
 }
 
 // ============================================================================
-// 10. LlmPageAnalyzer: malformed JSON → falls back to MockPageAnalyzer
+// 10. LlmPageAnalyzer: malformed JSON â†’ falls back to MockPageAnalyzer
 // ============================================================================
 
 #[test]
@@ -390,47 +435,26 @@ fn llm_analyzer_malformed_json() {
 
 #[test]
 fn field_classification() {
-    // By input_type
-    assert_eq!(classify_field_type(Some("email"), None), FieldType::Email);
-    assert_eq!(
-        classify_field_type(Some("password"), None),
-        FieldType::Password
-    );
-    assert_eq!(classify_field_type(Some("number"), None), FieldType::Number);
-    assert_eq!(classify_field_type(Some("date"), None), FieldType::Date);
-    assert_eq!(classify_field_type(Some("tel"), None), FieldType::Tel);
-    assert_eq!(classify_field_type(Some("url"), None), FieldType::Url);
-    assert_eq!(
-        classify_field_type(Some("checkbox"), None),
-        FieldType::Checkbox
-    );
-    assert_eq!(classify_field_type(Some("radio"), None), FieldType::Radio);
-    assert_eq!(
-        classify_field_type(Some("select"), None),
-        FieldType::Select
-    );
+    // By input_type (tag=None, existing behavior preserved)
+    assert_eq!(classify_field_type(Some("email"), None, None), FieldType::Email);
+    assert_eq!(classify_field_type(Some("password"), None, None), FieldType::Password);
+    assert_eq!(classify_field_type(Some("number"), None, None), FieldType::Number);
+    assert_eq!(classify_field_type(Some("date"), None, None), FieldType::Date);
+    assert_eq!(classify_field_type(Some("tel"), None, None), FieldType::Tel);
+    assert_eq!(classify_field_type(Some("url"), None, None), FieldType::Url);
+    assert_eq!(classify_field_type(Some("checkbox"), None, None), FieldType::Checkbox);
+    assert_eq!(classify_field_type(Some("radio"), None, None), FieldType::Radio);
+    assert_eq!(classify_field_type(Some("select"), None, None), FieldType::Select);
 
     // By label (when input_type is generic "text")
-    assert_eq!(
-        classify_field_type(Some("text"), Some("Email Address")),
-        FieldType::Email
-    );
-    assert_eq!(
-        classify_field_type(Some("text"), Some("Your Password")),
-        FieldType::Password
-    );
-    assert_eq!(
-        classify_field_type(Some("text"), Some("Phone Number")),
-        FieldType::Tel
-    );
+    assert_eq!(classify_field_type(Some("text"), Some("Email Address"), None), FieldType::Email);
+    assert_eq!(classify_field_type(Some("text"), Some("Your Password"), None), FieldType::Password);
+    assert_eq!(classify_field_type(Some("text"), Some("Phone Number"), None), FieldType::Tel);
 
-    // Unknown → Text
-    assert_eq!(classify_field_type(Some("text"), None), FieldType::Text);
-    assert_eq!(
-        classify_field_type(Some("text"), Some("Something")),
-        FieldType::Text
-    );
-    assert_eq!(classify_field_type(None, None), FieldType::Text);
+    // Unknown -> Text
+    assert_eq!(classify_field_type(Some("text"), None, None), FieldType::Text);
+    assert_eq!(classify_field_type(Some("text"), Some("Something"), None), FieldType::Text);
+    assert_eq!(classify_field_type(None, None, None), FieldType::Text);
 }
 
 // ============================================================================
@@ -572,7 +596,7 @@ fn map_category_aliases() {
 }
 
 // ============================================================================
-// 22. Category mapping: unknown values → Other
+// 22. Category mapping: unknown values â†’ Other
 // ============================================================================
 
 #[test]
@@ -589,7 +613,7 @@ fn map_category_unknown() {
 
 #[test]
 fn hybrid_llm_overrides_category() {
-    // LLM says Login, but empty_screen() has no forms → MockPageAnalyzer would say Other
+    // LLM says Login, but empty_screen() has no forms â†’ MockPageAnalyzer would say Other
     let response = r#"{"purpose":"Auth page","category":"Login"}"#;
     let analyzer = LlmPageAnalyzer::with_mock_response(response);
     let screen = empty_screen();
@@ -619,7 +643,7 @@ fn hybrid_llm_purpose_only() {
 }
 
 // ============================================================================
-// 25. Hybrid enrichment: LLM returns garbage → full fallback
+// 25. Hybrid enrichment: LLM returns garbage â†’ full fallback
 // ============================================================================
 
 #[test]
@@ -667,9 +691,9 @@ fn hybrid_preserves_field_types() {
     assert_eq!(model.purpose, "User authentication");
     assert_eq!(model.category, PageCategory::Login);
 
-    // Deterministic field types preserved
+    // Deterministic field types preserved — Login category values
     assert_eq!(model.forms[0].fields[0].field_type, FieldType::Email);
-    assert_eq!(model.forms[0].fields[0].suggested_test_value, "user@example.com");
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "testuser@example.com");
     assert_eq!(model.forms[0].fields[1].field_type, FieldType::Password);
     assert_eq!(model.forms[0].fields[1].suggested_test_value, "TestPass123!");
     assert_eq!(model.forms[0].submit_label, Some("Sign In".into()));
@@ -726,8 +750,8 @@ fn prompt_length_reasonable() {
     let prompt = LlmPageAnalyzer::build_page_prompt(&screen);
 
     assert!(
-        prompt.len() < 600,
-        "Prompt should be under 600 chars for small models, got {}",
+        prompt.len() < 800,
+        "Prompt should be under 800 chars for small models, got {}",
         prompt.len()
     );
     // Should be significantly shorter than the old ~1500 char prompt
@@ -736,4 +760,171 @@ fn prompt_length_reasonable() {
         "Prompt should be at least 100 chars, got {}",
         prompt.len()
     );
+}
+
+// ============================================================================
+// New FieldType classification tests — expanded types
+// ============================================================================
+
+#[test]
+fn field_classification_new_input_types() {
+    assert_eq!(classify_field_type(Some("search"), None, None), FieldType::Search);
+    assert_eq!(classify_field_type(Some("time"), None, None), FieldType::Time);
+    assert_eq!(classify_field_type(Some("hidden"), None, None), FieldType::Hidden);
+    assert_eq!(classify_field_type(Some("color"), None, None), FieldType::Other);
+    assert_eq!(classify_field_type(Some("range"), None, None), FieldType::Other);
+    assert_eq!(classify_field_type(Some("file"), None, None), FieldType::Other);
+    assert_eq!(classify_field_type(Some("month"), None, None), FieldType::Other);
+    assert_eq!(classify_field_type(Some("week"), None, None), FieldType::Other);
+}
+
+#[test]
+fn field_classification_textarea_tag() {
+    assert_eq!(classify_field_type(None, None, Some("textarea")), FieldType::Textarea);
+    assert_eq!(classify_field_type(Some("text"), None, Some("textarea")), FieldType::Textarea);
+}
+
+#[test]
+fn field_classification_select_tag() {
+    assert_eq!(classify_field_type(None, None, Some("select")), FieldType::Select);
+}
+
+#[test]
+fn field_classification_label_search() {
+    assert_eq!(classify_field_type(Some("text"), Some("Search"), None), FieldType::Search);
+    assert_eq!(classify_field_type(Some("text"), Some("Search query"), None), FieldType::Search);
+}
+
+#[test]
+fn field_classification_label_textarea() {
+    assert_eq!(classify_field_type(Some("text"), Some("Comment"), None), FieldType::Textarea);
+    assert_eq!(classify_field_type(Some("text"), Some("Message"), None), FieldType::Textarea);
+    assert_eq!(classify_field_type(Some("text"), Some("Description"), None), FieldType::Textarea);
+}
+
+#[test]
+fn classify_preserves_existing_behavior() {
+    // Existing mappings still work with tag=None
+    assert_eq!(classify_field_type(Some("email"), None, None), FieldType::Email);
+    assert_eq!(classify_field_type(Some("password"), None, None), FieldType::Password);
+    assert_eq!(classify_field_type(Some("number"), None, None), FieldType::Number);
+    assert_eq!(classify_field_type(Some("text"), Some("Email"), None), FieldType::Email);
+    assert_eq!(classify_field_type(Some("text"), Some("Phone"), None), FieldType::Tel);
+    assert_eq!(classify_field_type(None, None, None), FieldType::Text);
+}
+
+// ============================================================================
+// MockPageAnalyzer tests — new field wiring
+// ============================================================================
+
+#[test]
+fn mock_analyzer_extracts_required() {
+    let analyzer = MockPageAnalyzer;
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![Form {
+            id: "test".into(),
+            intent: None,
+            inputs: vec![ScreenElement {
+                label: Some("Email".into()),
+                kind: ElementKind::Input,
+                tag: Some("input".into()),
+                role: Some("textbox".into()),
+                input_type: Some("email".into()),
+                required: true,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
+            }],
+            actions: vec![],
+            primary_action: None,
+        }],
+        outputs: vec![],
+        standalone_actions: vec![],
+        identities: std::collections::HashMap::new(),
+    };
+
+    let model = analyzer.analyze(&screen).unwrap();
+    assert!(model.forms[0].fields[0].required);
+}
+
+#[test]
+fn mock_analyzer_select_uses_first_option() {
+    use screen_detection::screen::screen_model::SelectOption;
+
+    let analyzer = MockPageAnalyzer;
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![Form {
+            id: "test".into(),
+            intent: None,
+            inputs: vec![ScreenElement {
+                label: Some("Country".into()),
+                kind: ElementKind::Input,
+                tag: Some("select".into()),
+                role: None,
+                input_type: None,
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: Some(vec![
+                    SelectOption { value: "us".into(), text: "United States".into() },
+                    SelectOption { value: "ca".into(), text: "Canada".into() },
+                ]),
+            }],
+            actions: vec![],
+            primary_action: None,
+        }],
+        outputs: vec![],
+        standalone_actions: vec![],
+        identities: std::collections::HashMap::new(),
+    };
+
+    let model = analyzer.analyze(&screen).unwrap();
+    assert_eq!(model.forms[0].fields[0].field_type, FieldType::Select);
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "us");
+}
+
+#[test]
+fn mock_analyzer_login_page_uses_login_values() {
+    let analyzer = MockPageAnalyzer;
+    let screen = login_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    assert_eq!(model.category, PageCategory::Login);
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "testuser@example.com");
+}
+
+#[test]
+fn llm_analyzer_field_value_override() {
+    let response = r##"{"purpose":"Login","category":"Login","field_values":{"Email":"custom@ai.com","Password":"AiPass!"}}"##;
+    let analyzer = LlmPageAnalyzer::with_mock_response(response);
+    let screen = login_screen();
+    let model = analyzer.analyze(&screen).unwrap();
+
+    assert_eq!(model.forms[0].fields[0].suggested_test_value, "custom@ai.com");
+    assert_eq!(model.forms[0].fields[1].suggested_test_value, "AiPass!");
+}
+
+// ============================================================================
+// FieldType serde — verify new variants
+// ============================================================================
+
+#[test]
+fn field_type_serde_new_variants() {
+    let variants = vec![
+        FieldType::Textarea,
+        FieldType::Search,
+        FieldType::Hidden,
+        FieldType::Time,
+    ];
+    for variant in &variants {
+        let json = serde_json::to_string(variant).unwrap();
+        let back: FieldType = serde_json::from_str(&json).unwrap();
+        assert_eq!(*variant, back);
+    }
 }

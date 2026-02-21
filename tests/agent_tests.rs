@@ -6,6 +6,7 @@ use screen_detection::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision},
         ai_model::{DeterministicPolicy, guess_value},
+        page_model::PageCategory,
         budget::{BudgetDecision, check_budgets},
         error::AgentError,
     },
@@ -65,6 +66,11 @@ fn mock_screen_with_form() -> ScreenState {
                 tag: Some("input".into()),
                 role: Some("textbox".into()),
                 input_type: Some("text".into()),
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             actions: vec![ScreenElement {
                 label: Some("Sign In".into()),
@@ -72,6 +78,11 @@ fn mock_screen_with_form() -> ScreenState {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: Some("submit".into()),
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: None,
             intent: None,
@@ -422,28 +433,28 @@ fn agent_with_deterministic_policy() {
 
 #[test]
 fn guess_value_uses_label_heuristics() {
-    assert_eq!(guess_value("email", None), "user@example.com");
-    assert_eq!(guess_value("Email Address", None), "user@example.com");
-    assert_eq!(guess_value("password", None), "TestPass123!");
-    assert_eq!(guess_value("Phone Number", None), "555-0100");
-    assert_eq!(guess_value("search", None), "test query");
-    assert_eq!(guess_value("query", None), "test query");
-    assert_eq!(guess_value("username", None), "testuser");
-    assert_eq!(guess_value("Full Name", None), "Jane Doe");
-    assert_eq!(guess_value("zip code", None), "90210");
-    assert_eq!(guess_value("some random field", None), "test");
+    assert_eq!(guess_value("email", None, None), "user@example.com");
+    assert_eq!(guess_value("Email Address", None, None), "user@example.com");
+    assert_eq!(guess_value("password", None, None), "TestPass123!");
+    assert_eq!(guess_value("Phone Number", None, None), "555-0100");
+    assert_eq!(guess_value("search", None, None), "test query");
+    assert_eq!(guess_value("query", None, None), "test query");
+    assert_eq!(guess_value("username", None, None), "testuser");
+    assert_eq!(guess_value("Full Name", None, None), "Jane Doe");
+    assert_eq!(guess_value("zip code", None, None), "90210");
+    assert_eq!(guess_value("some random field", None, None), "test");
 }
 
 #[test]
 fn guess_value_falls_back_to_input_type() {
-    // Generic label, but specific input type
-    assert_eq!(guess_value("enter value", Some("email")), "user@example.com");
-    assert_eq!(guess_value("enter value", Some("password")), "TestPass123!");
-    assert_eq!(guess_value("enter value", Some("tel")), "555-0100");
-    assert_eq!(guess_value("enter value", Some("number")), "42");
-    assert_eq!(guess_value("enter value", Some("date")), "2025-01-15");
+    // Generic label, but specific input type (no category)
+    assert_eq!(guess_value("enter value", Some("email"), None), "user@example.com");
+    assert_eq!(guess_value("enter value", Some("password"), None), "TestPass123!");
+    assert_eq!(guess_value("enter value", Some("tel"), None), "555-0100");
+    assert_eq!(guess_value("enter value", Some("number"), None), "42");
+    assert_eq!(guess_value("enter value", Some("date"), None), "2025-01-15");
     // Unknown type falls to final fallback
-    assert_eq!(guess_value("enter value", Some("text")), "test");
+    assert_eq!(guess_value("enter value", Some("text"), None), "test");
 }
 
 #[test]
@@ -461,7 +472,7 @@ fn deterministic_policy_returns_fill_and_submit() {
             assert_eq!(form_id, "login");
             assert_eq!(values.len(), 1);
             assert_eq!(values[0].0, "Username");
-            assert_eq!(values[0].1, "testuser"); // "Username" label → "testuser"
+            assert_eq!(values[0].1, "testuser"); // "Username" label â†’ "testuser"
             assert_eq!(submit_label.as_deref(), Some("Sign In"));
         }
         other => panic!("Expected FillAndSubmitForm, got {:?}", other),
@@ -483,6 +494,11 @@ fn deterministic_policy_multi_input_form() {
                     tag: Some("input".into()),
                     role: Some("textbox".into()),
                     input_type: Some("email".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -490,6 +506,11 @@ fn deterministic_policy_multi_input_form() {
                     tag: Some("input".into()),
                     role: None,
                     input_type: Some("password".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
                 ScreenElement {
                     label: Some("Phone".into()),
@@ -497,6 +518,11 @@ fn deterministic_policy_multi_input_form() {
                     tag: Some("input".into()),
                     role: None,
                     input_type: Some("tel".into()),
+                    required: false,
+                    placeholder: None,
+                    id: None,
+                    href: None,
+                    options: None,
                 },
             ],
             actions: vec![ScreenElement {
@@ -505,6 +531,11 @@ fn deterministic_policy_multi_input_form() {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: Some("submit".into()),
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: None,
             intent: None,
@@ -560,7 +591,7 @@ fn agent_error_display_messages() {
 
 #[test]
 fn agent_error_source_chain() {
-    // JsonParse wraps serde_json::Error → source() is Some
+    // JsonParse wraps serde_json::Error â†’ source() is Some
     let json_err: serde_json::Error = serde_json::from_str::<String>("not json").unwrap_err();
     let parse = AgentError::JsonParse {
         context: "test".into(),
@@ -568,15 +599,15 @@ fn agent_error_source_chain() {
     };
     assert!(parse.source().is_some(), "JsonParse should have a source");
 
-    // BrowserAction → no source
+    // BrowserAction â†’ no source
     let browser = AgentError::BrowserAction("fail".into());
     assert!(browser.source().is_none(), "BrowserAction should have no source");
 
-    // MissingState → no source
+    // MissingState â†’ no source
     let missing = AgentError::MissingState("x".into());
     assert!(missing.source().is_none(), "MissingState should have no source");
 
-    // ElementNotFound → no source
+    // ElementNotFound â†’ no source
     let not_found = AgentError::ElementNotFound {
         element: "x".into(),
         context: "y".into(),
@@ -605,7 +636,7 @@ fn agent_error_session_protocol_display() {
 }
 
 // =========================================================================
-// DeterministicPolicy — signal branches
+// DeterministicPolicy â€” signal branches
 // =========================================================================
 
 #[test]
@@ -660,7 +691,7 @@ fn deterministic_policy_waits_on_error_appeared() {
 }
 
 // =========================================================================
-// DeterministicPolicy — edge cases
+// DeterministicPolicy â€” edge cases
 // =========================================================================
 
 #[test]
@@ -696,6 +727,11 @@ fn deterministic_policy_form_no_inputs_still_submits() {
                 tag: Some("button".into()),
                 role: Some("button".into()),
                 input_type: Some("submit".into()),
+                required: false,
+                placeholder: None,
+                id: None,
+                href: None,
+                options: None,
             }],
             primary_action: None,
             intent: None,
@@ -906,4 +942,134 @@ fn execute_action_session_errors_on_missing_element() {
     // Test via the original execute_action (same error behavior)
     let result = execute_action(&action, &state);
     assert!(matches!(result.unwrap_err(), AgentError::ElementNotFound { .. }));
+}
+
+// =========================================================================
+// New guess_value tests — expanded patterns
+// =========================================================================
+
+#[test]
+fn guess_value_first_last_name() {
+    assert_eq!(guess_value("First Name", None, None), "Jane");
+    assert_eq!(guess_value("Last Name", None, None), "Doe");
+    assert_eq!(guess_value("Surname", None, None), "Doe");
+    assert_eq!(guess_value("Full Name", None, None), "Jane Doe");
+}
+
+#[test]
+fn guess_value_address_fields() {
+    assert_eq!(guess_value("Street Address", None, None), "123 Test Street");
+    assert_eq!(guess_value("Address Line 1", None, None), "123 Test Street");
+    assert_eq!(guess_value("Address", None, None), "123 Test Street, Apt 1");
+    assert_eq!(guess_value("City", None, None), "Springfield");
+    assert_eq!(guess_value("State", None, None), "CA");
+    assert_eq!(guess_value("Province", None, None), "CA");
+    assert_eq!(guess_value("Region", None, None), "CA");
+    assert_eq!(guess_value("Country", None, None), "US");
+}
+
+#[test]
+fn guess_value_payment_fields() {
+    assert_eq!(guess_value("Card Number", None, None), "4111111111111111");
+    assert_eq!(guess_value("Credit Card", None, None), "4111111111111111");
+    assert_eq!(guess_value("CVV", None, None), "123");
+    assert_eq!(guess_value("CVC", None, None), "123");
+    assert_eq!(guess_value("Security Code", None, None), "123");
+    assert_eq!(guess_value("Expiration Date", None, None), "12/2028");
+    assert_eq!(guess_value("Exp Date", None, None), "12/2028");
+}
+
+#[test]
+fn guess_value_textarea_fields() {
+    assert_eq!(guess_value("Comment", None, None), "This is a test comment.");
+    assert_eq!(guess_value("Message", None, None), "This is a test comment.");
+    assert_eq!(guess_value("Description", None, None), "This is a test comment.");
+    assert_eq!(guess_value("Bio", None, None), "This is a test comment.");
+    assert_eq!(guess_value("Notes", None, None), "This is a test comment.");
+}
+
+#[test]
+fn guess_value_identity_fields() {
+    assert_eq!(guess_value("Company", None, None), "Acme Corp");
+    assert_eq!(guess_value("Organization", None, None), "Acme Corp");
+    assert_eq!(guess_value("Age", None, None), "30");
+    assert_eq!(guess_value("Birthday", None, None), "1990-01-15");
+    assert_eq!(guess_value("Date of Birth", None, None), "1990-01-15");
+    assert_eq!(guess_value("DOB", None, None), "1990-01-15");
+}
+
+#[test]
+fn guess_value_time_field() {
+    assert_eq!(guess_value("Time", None, None), "10:30");
+    assert_eq!(guess_value("enter value", Some("time"), None), "10:30");
+}
+
+#[test]
+fn guess_value_confirm_password() {
+    assert_eq!(guess_value("Confirm Password", None, None), "TestPass123!");
+    assert_eq!(guess_value("Confirm your password", None, None), "TestPass123!");
+}
+
+#[test]
+fn guess_value_input_type_fallbacks_expanded() {
+    assert_eq!(guess_value("enter value", Some("search"), None), "test query");
+    assert_eq!(guess_value("enter value", Some("month"), None), "2025-01");
+    assert_eq!(guess_value("enter value", Some("week"), None), "2025-W03");
+    assert_eq!(guess_value("enter value", Some("color"), None), "#336699");
+    assert_eq!(guess_value("enter value", Some("range"), None), "50");
+    assert_eq!(guess_value("enter value", Some("checkbox"), None), "true");
+    assert_eq!(guess_value("enter value", Some("radio"), None), "option1");
+}
+
+#[test]
+fn guess_value_address_ordering() {
+    // "street" should match before generic "address"
+    assert_eq!(guess_value("Street", None, None), "123 Test Street");
+    assert_eq!(guess_value("Mailing Address", None, None), "123 Test Street, Apt 1");
+}
+
+#[test]
+fn guess_value_card_vs_number() {
+    // "card number" should match card pattern, not generic "number"
+    assert_eq!(guess_value("Card Number", None, None), "4111111111111111");
+    assert_eq!(guess_value("Number of items", None, None), "42");
+}
+
+// =========================================================================
+// Intent-based (category-aware) guess_value tests
+// =========================================================================
+
+#[test]
+fn guess_value_login_context() {
+    let cat = PageCategory::Login;
+    assert_eq!(guess_value("Email", None, Some(&cat)), "testuser@example.com");
+    assert_eq!(guess_value("Username", None, Some(&cat)), "testuser@example.com");
+    assert_eq!(guess_value("Password", None, Some(&cat)), "TestPass123!");
+}
+
+#[test]
+fn guess_value_registration_context() {
+    let cat = PageCategory::Registration;
+    assert_eq!(guess_value("Email", None, Some(&cat)), "newuser_test@example.com");
+    assert_eq!(guess_value("Password", None, Some(&cat)), "NewPass456!");
+    assert_eq!(guess_value("Confirm Password", None, Some(&cat)), "NewPass456!");
+    assert_eq!(guess_value("Username", None, Some(&cat)), "new_testuser");
+}
+
+#[test]
+fn guess_value_checkout_context() {
+    let cat = PageCategory::Checkout;
+    assert_eq!(guess_value("City", None, Some(&cat)), "New York");
+    assert_eq!(guess_value("Zip Code", None, Some(&cat)), "10001");
+    assert_eq!(guess_value("State", None, Some(&cat)), "NY");
+    assert_eq!(guess_value("Card Number", None, Some(&cat)), "4111111111111111");
+    assert_eq!(guess_value("Address", None, Some(&cat)), "123 Main St");
+}
+
+#[test]
+fn guess_value_no_category_falls_through() {
+    // Without category, generic patterns apply
+    assert_eq!(guess_value("Email", None, None), "user@example.com");
+    assert_eq!(guess_value("City", None, None), "Springfield");
+    assert_eq!(guess_value("State", None, None), "CA");
 }
