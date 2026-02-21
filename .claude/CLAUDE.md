@@ -28,6 +28,7 @@ Raw DOM (JSON from Playwright/Node.js)
 | `spec` | `spec_model.rs`, `context.rs`, `runner.rs` | Test spec data model (TestSpec, TestStep, AssertionSpec); TestRunner executes specs via BrowserSession; TestContext tracks assertion results |
 | `explorer` | `app_map.rs`, `explorer.rs`, `flow_detector.rs`, `test_generator.rs` | Autonomous exploration and test generation; AppMap page graph (PageNode, Transition, TransitionKind); form-aware BFS crawling via BrowserSession; flow detection across FormSubmission chains; TestSpec generation from PageModel (smoke + form + flow tests) |
 | `report` | `report_model.rs`, `console.rs`, `html.rs`, `junit.rs` | Test suite reporting; `TestSuiteReport` aggregation; console output (pass/fail markers), self-contained HTML report, JUnit XML for CI |
+| `cli` | `config.rs`, `commands.rs` | CLI argument parsing (clap derive) with 3 subcommands (explore, run, generate); YAML config file support; wires all modules into usable command-line tool |
 | `trace` | `trace.rs`, `logger.rs` | JSONL trace logging with builder-pattern TraceEvent |
 
 ## Key Design Decisions
@@ -68,18 +69,18 @@ Raw DOM (JSON from Playwright/Node.js)
 
 ```bash
 cargo build
-cargo test                       # 189 offline tests (fast, no browser needed)
+cargo test                       # 204 offline tests (fast, no browser needed)
 cargo test -- --ignored          # 28 integration tests (requires Node.js + Playwright; 5 LLM tests need Ollama)
-cargo test -- --include-ignored  # all 217 tests
+cargo test -- --include-ignored  # all 232 tests
 ```
 
 - Rust edition 2024
-- Dependencies: serde (1.0.228 with derive), serde_json (1.0.145), serde_yaml (0.9), sha1 (0.10.6), reqwest (0.12 with json + blocking)
+- Dependencies: serde (1.0.228 with derive), serde_json (1.0.145), serde_yaml (0.9), sha1 (0.10.6), reqwest (0.12 with json + blocking), clap (4 with derive)
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 217 tests total: 189 offline + 28 integration (real browser via `#[ignore]`)
-- 189 offline tests split across module-based test files:
+- 232 tests total: 204 offline + 28 integration (real browser via `#[ignore]`)
+- 204 offline tests split across module-based test files:
   - `tests/agent_tests.rs` (44) — agent behavior, policy logic, guess_value heuristics (generic + intent-based), budget gating, error handling
   - `tests/browser_tests.rs` (29) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol, select/check/uncheck serialization, DomElement/SelectOption serde
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
@@ -88,6 +89,7 @@ cargo test -- --include-ignored  # all 217 tests
   - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
   - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
+  - `tests/cli_tests.rs` (15) — CLI argument parsing (explore/run/generate subcommands), config file loading/defaults/YAML roundtrip, ExplorerConfig builder, sanitize_filename, load_specs
 - 28 integration tests (real browser, `#[ignore]`):
   - `tests/integration_tests.rs` (28) — session lifecycle, DOM pipeline, queries, form interaction, TestRunner, navigation, canonical pipeline, form-aware exploration, flow detection, LLM page analysis (5 tests, requires Ollama)
 
@@ -142,13 +144,39 @@ cargo test -- --include-ignored  # all 217 tests
 - `Flow`: name, steps (Vec<FlowStep>) — detected multi-step user journey
 - `AppMap`: pages (HashMap<String, PageNode>), transitions (Vec<Transition>) — graph of discovered pages; has add_page(), add_transition(), page_count(), has_page()
 - `TestSuiteReport`: suite_name, total, passed, failed, duration_ms, test_results — aggregated report; from_results(), with_duration(), all_passed()
+- `Cli`: clap-derived CLI parser with global args (verbose, ollama_endpoint, ollama_model, config) and `Commands` subcommand enum
+- `Commands`: Explore { url, max_pages, max_depth, explore_forms, max_forms_per_page, analyzer } | Run { spec, format, output } | Generate { url, output_dir, ... } — CLI subcommands
+- `AppConfig`: explore (ExploreConfig), run (RunConfig), ollama (OllamaConfig) — optional YAML config file model with serde defaults
+
+## CLI Usage
+
+```bash
+# Explore a website
+cargo run -- explore --url https://example.com --max-pages 5 -v
+
+# Generate test specs from exploration
+cargo run -- generate --url https://example.com -o ./generated-specs -v
+
+# Run test specs
+cargo run -- run --spec ./generated-specs --format console
+cargo run -- run --spec test.yaml --format html -o report.html
+cargo run -- run --spec test.yaml --format junit -o report.xml
+
+# With LLM analyzer
+cargo run -- explore --url https://example.com --analyzer llm --ollama-model llama3
+
+# With config file
+cargo run -- --config my-config.yaml explore --url https://example.com
+```
+
+Exit code: 0 if all tests pass, 1 if any fail (for CI integration).
 
 ## File Layout
 
 ```
 src/
   lib.rs              -- Agent loop orchestration (run_app, run_app_session), snapshot(), snapshot_session()
-  main.rs             -- Entry point
+  main.rs             -- CLI entry point (clap parsing, subcommand dispatch)
   agent/
     mod.rs            -- Module exports
     agent.rs          -- State machine, gating, execute_action(), execute_action_session(), emit_observed_actions()
@@ -195,6 +223,10 @@ src/
     console.rs        -- format_console_report(): terminal output with pass/fail markers and failure details
     html.rs           -- generate_html_report(): self-contained HTML with inline CSS, green/red header
     junit.rs          -- generate_junit_xml(): standard JUnit XML for CI (Jenkins, GitHub Actions), escape_xml()
+  cli/
+    mod.rs            -- Module exports
+    config.rs         -- Cli, Commands (clap derive), AppConfig (YAML config model), load_config(), build_explorer_config()
+    commands.rs       -- cmd_explore(), cmd_run(), cmd_generate(), build_analyzer(), load_specs(), sanitize_filename()
   trace/
     mod.rs            -- Module exports
     trace.rs          -- TraceEvent builder
@@ -208,6 +240,7 @@ tests/
   report_tests.rs     -- 15 tests: TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
   state_tests.rs      -- 3 tests: normalize, form intent scoring
+  cli_tests.rs        -- 15 tests: CLI arg parsing (explore/run/generate), config loading/defaults/YAML, builder, sanitize_filename, load_specs
   integration_tests.rs -- 28 tests (real browser, #[ignore]): session, DOM, queries, forms, runner, nav, canonical, form-aware exploration, flow detection, LLM page analysis
   common/
     mod.rs            -- Module exports
