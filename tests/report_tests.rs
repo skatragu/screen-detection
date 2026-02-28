@@ -23,6 +23,9 @@ fn passing_result(name: &str) -> TestResult {
             message: None,
         }],
         error: None,
+        duration_ms: None,
+        screenshots: vec![],
+        retry_attempts: 0,
     }
 }
 
@@ -52,6 +55,9 @@ fn failing_result(name: &str) -> TestResult {
             },
         ],
         error: None,
+        duration_ms: None,
+        screenshots: vec![],
+        retry_attempts: 0,
     }
 }
 

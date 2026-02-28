@@ -125,4 +125,16 @@ pub struct TestResult {
 
     /// Error message if the test failed due to an error (not assertion failure)
     pub error: Option<String>,
+
+    /// Per-test execution duration in milliseconds
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u128>,
+
+    /// Screenshot paths captured on failure (embedded as base64 by reporters)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
+
+    /// Number of assertion retry attempts used (0 = no retries needed)
+    #[serde(default)]
+    pub retry_attempts: usize,
 }

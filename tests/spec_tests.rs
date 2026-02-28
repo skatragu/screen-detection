@@ -320,6 +320,9 @@ fn test_result_serializes_correctly() {
             },
         ],
         error: None,
+        duration_ms: None,
+        screenshots: vec![],
+        retry_attempts: 0,
     };
 
     let json = serde_json::to_string(&result).expect("serialize TestResult");
@@ -336,6 +339,9 @@ fn test_result_with_error() {
         steps_run: 2,
         assertion_results: vec![],
         error: Some("Step 2 failed: element not found".into()),
+        duration_ms: None,
+        screenshots: vec![],
+        retry_attempts: 0,
     };
 
     let json = serde_json::to_string(&result).expect("serialize TestResult");

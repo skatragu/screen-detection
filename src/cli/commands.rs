@@ -10,6 +10,7 @@ use crate::report::html::generate_html_report;
 use crate::report::junit::generate_junit_xml;
 use crate::report::report_model::TestSuiteReport;
 use crate::spec::runner::TestRunner;
+use crate::spec::runner_config::RunnerConfig;
 use crate::spec::spec_model::TestSpec;
 
 // ============================================================================
@@ -94,12 +95,13 @@ pub fn cmd_run(
     let mut session = BrowserSession::launch()?;
     let start = std::time::Instant::now();
 
+    let runner_config = RunnerConfig::default();
     let mut results = Vec::new();
     for spec in &specs {
         if verbose > 0 {
             eprintln!("  Running: {}", spec.name);
         }
-        let result = TestRunner::run(spec, &mut session);
+        let result = TestRunner::run_with_config(spec, &mut session, &runner_config);
         results.push(result);
     }
 

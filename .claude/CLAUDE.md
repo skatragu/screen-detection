@@ -25,7 +25,7 @@ Raw DOM (JSON from Playwright/Node.js)
 | `state` | `state_builder.rs`, `state_model.rs`, `identity.rs`, `diff.rs`, `normalize.rs` | Builds screen state with stable semantic element IDs; computes identity-based diffs; defines `ScreenState` and `Outcome` |
 | `canonical` | `canonical_model.rs`, `diff.rs` | Canonicalizes state into BTreeMap; derives semantic signals from diffs |
 | `agent` | `agent.rs`, `agent_model.rs`, `ai_model.rs`, `budget.rs`, `error.rs`, `page_model.rs`, `page_analyzer.rs` | State machine (Observe->Evaluate->Think->Act->Stop); multi-layer gating; pluggable LLM backends with `DeterministicPolicy` and `HybridPolicy`; typed `AgentError` enum; both subprocess and session execution; AI page understanding via `PageAnalyzer` trait |
-| `spec` | `spec_model.rs`, `context.rs`, `runner.rs` | Test spec data model (TestSpec, TestStep, AssertionSpec); TestRunner executes specs via BrowserSession; TestContext tracks assertion results |
+| `spec` | `spec_model.rs`, `context.rs`, `runner.rs`, `runner_config.rs` | Test spec data model (TestSpec, TestStep, AssertionSpec); TestRunner executes specs via BrowserSession with retry/screenshot resilience (RunnerConfig); TestContext tracks assertion results |
 | `explorer` | `app_map.rs`, `explorer.rs`, `flow_detector.rs`, `test_generator.rs` | Autonomous exploration and test generation; AppMap page graph (PageNode, Transition, TransitionKind); form-aware BFS crawling via BrowserSession; flow detection across FormSubmission chains; TestSpec generation from PageModel (smoke + form + flow tests) |
 | `report` | `report_model.rs`, `console.rs`, `html.rs`, `junit.rs` | Test suite reporting; `TestSuiteReport` aggregation; console output (pass/fail markers), self-contained HTML report, JUnit XML for CI |
 | `cli` | `config.rs`, `commands.rs` | CLI argument parsing (clap derive) with 3 subcommands (explore, run, generate); YAML config file support; wires all modules into usable command-line tool |
@@ -50,6 +50,7 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Transition tracking**: `TransitionKind` enum (`Link` | `FormSubmission { form_id, values }`) tracks how each page transition was triggered. Defaults to `Link` for backward compatibility via `#[serde(default)]`.
 - **Flow detection**: `detect_flows(app_map)` walks `FormSubmission` transition chains to discover multi-step user flows. Starts from "origin" pages (not targets of other form submissions). Names flows from `PageCategory` (e.g., "Flow: Login -> Dashboard").
 - **Test generation**: `generate_test_plan(app_map)` produces `Vec<TestSpec>` from explored pages. Per page: smoke test (wait + assert suggested_assertions) + per-form test (fill_and_submit with AI-suggested values). Plus flow tests from `detect_flows()`. `map_suggested_assertion()` bridges `SuggestedAssertion` → `AssertionSpec`.
+- **Resilient test runner**: `TestRunner::run_with_config(spec, session, config)` adds assertion retry (configurable max retries + delay), screenshot on failure (base64-embedded in HTML reports), and per-test duration tracking. `RunnerConfig` controls retry/screenshot settings. `run()` delegates to `run_with_config()` with defaults for backward compatibility.
 
 ## Constants
 
@@ -69,9 +70,9 @@ Raw DOM (JSON from Playwright/Node.js)
 
 ```bash
 cargo build
-cargo test                       # 204 offline tests (fast, no browser needed)
+cargo test                       # 222 offline tests (fast, no browser needed)
 cargo test -- --ignored          # 28 integration tests (requires Node.js + Playwright; 5 LLM tests need Ollama)
-cargo test -- --include-ignored  # all 232 tests
+cargo test -- --include-ignored  # all 250 tests
 ```
 
 - Rust edition 2024
@@ -79,14 +80,15 @@ cargo test -- --include-ignored  # all 232 tests
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 232 tests total: 204 offline + 28 integration (real browser via `#[ignore]`)
-- 204 offline tests split across module-based test files:
+- 250 tests total: 222 offline + 28 integration (real browser via `#[ignore]`)
+- 222 offline tests split across module-based test files:
   - `tests/agent_tests.rs` (44) — agent behavior, policy logic, guess_value heuristics (generic + intent-based), budget gating, error handling
   - `tests/browser_tests.rs` (29) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol, select/check/uncheck serialization, DomElement/SelectOption serde
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
   - `tests/explorer_tests.rs` (30) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url
   - `tests/page_model_tests.rs` (41) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer (required, select options, login values), LlmPageAnalyzer hybrid enrichment + field_values override, JSON recovery (try_parse), category mapping, prompt construction, field classification (input types, tags, labels), navigation targets
   - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
+  - `tests/runner_tests.rs` (18) — RunnerConfig defaults/serde, TestResult new fields (duration_ms, screenshots, retry_attempts) serde + backward compat, console/HTML/JUnit output with timing/retry/screenshot, screenshot embedding
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
   - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
   - `tests/cli_tests.rs` (15) — CLI argument parsing (explore/run/generate subcommands), config file loading/defaults/YAML roundtrip, ExplorerConfig builder, sanitize_filename, load_specs
@@ -124,9 +126,10 @@ cargo test -- --include-ignored  # all 232 tests
 - `TestStep`: FillForm, FillAndSubmit, Click, Navigate, Wait, Assert — serde-tagged enum (`#[serde(tag = "action")]`)
 - `AssertionSpec`: UrlContains, UrlEquals, TitleContains, TextPresent, TextAbsent, ElementText, ElementVisible, ElementCount — serde-tagged enum (`#[serde(tag = "type")]`)
 - `AssertionResult`: step_index, spec, passed, actual, message — single assertion outcome
-- `TestResult`: spec_name, passed, steps_run, assertion_results, error — complete test run result
+- `TestResult`: spec_name, passed, steps_run, assertion_results, error, duration_ms (Option<u128>), screenshots (Vec<String>), retry_attempts (usize) — complete test run result; new fields use `#[serde(default)]` for backward compat
 - `TestContext`: current_step, assertion_results — execution state tracker with pass/fail counting
-- `TestRunner`: stateless executor — takes TestSpec + BrowserSession, returns TestResult
+- `TestRunner`: stateless executor — takes TestSpec + BrowserSession, returns TestResult; `run()` uses defaults; `run_with_config()` adds retry/screenshot/timing
+- `RunnerConfig`: max_assertion_retries (2), retry_delay_ms (500), screenshot_on_failure (true), screenshot_dir ("screenshots") — controls test runner resilience; separate from TestSpec (runner-level not spec-level concerns)
 - `PageModel`: purpose, category (PageCategory), forms (Vec<FormModel>), outputs, suggested_assertions, navigation_targets — AI understanding of a web page
 - `PageCategory`: Login, Registration, Search, Dashboard, Settings, Listing, Detail, Checkout, Error, Other — page classification enum
 - `FormModel`: form_id, purpose, fields (Vec<FieldModel>), submit_label — AI understanding of a form
@@ -214,14 +217,15 @@ src/
     test_generator.rs -- generate_test_plan(), generate_smoke_test(), generate_form_test(), generate_flow_tests(), map_suggested_assertion()
   spec/
     mod.rs            -- Module exports
-    spec_model.rs     -- TestSpec, TestStep, AssertionSpec, AssertionResult, TestResult
+    spec_model.rs     -- TestSpec, TestStep, AssertionSpec, AssertionResult, TestResult (with duration_ms, screenshots, retry_attempts)
     context.rs        -- TestContext: step tracking, assertion result collection, pass/fail counting
-    runner.rs         -- TestRunner: executes TestSpec via BrowserSession, evaluates assertions
+    runner.rs         -- TestRunner: run() and run_with_config(); execute_step_with_retry() for Assert steps; maybe_screenshot() on failure
+    runner_config.rs  -- RunnerConfig: max_assertion_retries, retry_delay_ms, screenshot_on_failure, screenshot_dir
   report/
     mod.rs            -- Module exports
     report_model.rs   -- TestSuiteReport: aggregation of Vec<TestResult>, from_results(), with_duration(), all_passed()
     console.rs        -- format_console_report(): terminal output with pass/fail markers and failure details
-    html.rs           -- generate_html_report(): self-contained HTML with inline CSS, green/red header
+    html.rs           -- generate_html_report(): self-contained HTML with inline CSS, green/red header, per-test duration, base64-embedded screenshots on failure
     junit.rs          -- generate_junit_xml(): standard JUnit XML for CI (Jenkins, GitHub Actions), escape_xml()
   cli/
     mod.rs            -- Module exports

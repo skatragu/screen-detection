@@ -2,27 +2,46 @@ use crate::agent::error::AgentError;
 use crate::browser::playwright::SelectorHint;
 use crate::browser::session::BrowserSession;
 use crate::spec::context::TestContext;
+use crate::spec::runner_config::RunnerConfig;
 use crate::spec::spec_model::{AssertionResult, AssertionSpec, TestResult, TestSpec, TestStep};
 
 /// Executes a TestSpec step-by-step using a BrowserSession.
 pub struct TestRunner;
 
 impl TestRunner {
-    /// Run a complete test spec against a browser session.
-    ///
-    /// Returns a TestResult with pass/fail status, assertion results,
-    /// and any error that occurred during execution.
+    /// Run a complete test spec with default config (backward compatible).
     pub fn run(spec: &TestSpec, session: &mut BrowserSession) -> TestResult {
+        Self::run_with_config(spec, session, &RunnerConfig::default())
+    }
+
+    /// Run a complete test spec with custom resilience config.
+    ///
+    /// Features:
+    /// - Per-test duration tracking
+    /// - Assertion retry on failure (configurable retries + delay)
+    /// - Screenshot capture on failure (configurable)
+    pub fn run_with_config(
+        spec: &TestSpec,
+        session: &mut BrowserSession,
+        config: &RunnerConfig,
+    ) -> TestResult {
+        let test_start = std::time::Instant::now();
         let mut ctx = TestContext::new();
+        let mut screenshots = Vec::new();
+        let mut total_retry_attempts: usize = 0;
 
         // Navigate to the start URL
         if let Err(e) = session.navigate(&spec.start_url) {
+            Self::maybe_screenshot(session, config, &spec.name, 0, &mut screenshots);
             return TestResult {
                 spec_name: spec.name.clone(),
                 passed: false,
                 steps_run: 0,
                 assertion_results: ctx.assertion_results,
                 error: Some(format!("Failed to navigate to start_url: {}", e)),
+                duration_ms: Some(test_start.elapsed().as_millis()),
+                screenshots,
+                retry_attempts: 0,
             };
         }
 
@@ -30,31 +49,86 @@ impl TestRunner {
         for (i, step) in spec.steps.iter().enumerate() {
             ctx.current_step = i;
 
-            match Self::execute_step(step, i, session, &mut ctx) {
-                Ok(()) => {}
+            match Self::execute_step_with_retry(step, i, session, &mut ctx, config) {
+                Ok(retries) => {
+                    total_retry_attempts += retries;
+                }
                 Err(e) => {
+                    Self::maybe_screenshot(session, config, &spec.name, i, &mut screenshots);
                     return TestResult {
                         spec_name: spec.name.clone(),
                         passed: false,
                         steps_run: i + 1,
                         assertion_results: ctx.assertion_results,
                         error: Some(format!("Step {} failed: {}", i, e)),
+                        duration_ms: Some(test_start.elapsed().as_millis()),
+                        screenshots,
+                        retry_attempts: total_retry_attempts,
                     };
                 }
             }
         }
 
         let passed = ctx.all_passed();
+
+        // Screenshot on assertion failure (passed = false but no execution error)
+        if !passed {
+            Self::maybe_screenshot(
+                session,
+                config,
+                &spec.name,
+                spec.steps.len(),
+                &mut screenshots,
+            );
+        }
+
         TestResult {
             spec_name: spec.name.clone(),
             passed,
             steps_run: spec.steps.len(),
             assertion_results: ctx.assertion_results,
             error: None,
+            duration_ms: Some(test_start.elapsed().as_millis()),
+            screenshots,
+            retry_attempts: total_retry_attempts,
         }
     }
 
-    /// Execute a single step.
+    /// Execute a step. For Assert steps, retry if assertions fail.
+    /// Returns Ok(retry_count) on success, Err on unrecoverable failure.
+    fn execute_step_with_retry(
+        step: &TestStep,
+        step_index: usize,
+        session: &mut BrowserSession,
+        ctx: &mut TestContext,
+        config: &RunnerConfig,
+    ) -> Result<usize, AgentError> {
+        // Only Assert steps get retried
+        if let TestStep::Assert { assertions } = step {
+            let mut retries_used = 0;
+            for attempt in 0..=config.max_assertion_retries {
+                let results = Self::evaluate_assertions(assertions, step_index, session);
+                let all_passed = results.iter().all(|r| r.passed);
+
+                if all_passed || attempt == config.max_assertion_retries {
+                    // Either all passed or we've exhausted retries — record results
+                    ctx.record_assertions(results);
+                    return Ok(retries_used);
+                }
+
+                // Assertions failed but retries remain — wait and retry
+                retries_used += 1;
+                let _ = session.wait_idle(config.retry_delay_ms);
+            }
+            unreachable!()
+        } else {
+            // Non-assert steps: execute once (no retry)
+            Self::execute_step(step, step_index, session, ctx)?;
+            Ok(0)
+        }
+    }
+
+    /// Execute a single step (non-retry path).
     fn execute_step(
         step: &TestStep,
         step_index: usize,
@@ -244,7 +318,10 @@ impl TestRunner {
                             message: if passed {
                                 None
                             } else {
-                                Some(format!("Text '{}' was found on page but should be absent", expected))
+                                Some(format!(
+                                    "Text '{}' was found on page but should be absent",
+                                    expected
+                                ))
                             },
                         }
                     }
@@ -386,6 +463,51 @@ impl TestRunner {
             tag: None,
             input_type: None,
             form_id: None,
+        }
+    }
+
+    /// Capture a screenshot if configured. Silently ignores errors.
+    fn maybe_screenshot(
+        session: &mut BrowserSession,
+        config: &RunnerConfig,
+        test_name: &str,
+        step_index: usize,
+        screenshots: &mut Vec<String>,
+    ) {
+        if !config.screenshot_on_failure {
+            return;
+        }
+
+        // Ensure directory exists
+        let _ = std::fs::create_dir_all(&config.screenshot_dir);
+
+        // Build filename: sanitized test name + step index + timestamp
+        let safe_name: String = test_name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+            .to_lowercase();
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+
+        let filename = format!("{}_step{}_failure_{}.png", safe_name, step_index, timestamp);
+        let path = std::path::Path::new(&config.screenshot_dir)
+            .join(&filename)
+            .to_string_lossy()
+            .to_string();
+
+        match session.screenshot(&path) {
+            Ok(()) => screenshots.push(path),
+            Err(_) => {} // Screenshot failure is not fatal
         }
     }
 }

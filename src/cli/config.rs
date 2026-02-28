@@ -169,6 +169,22 @@ pub struct RunConfig {
     pub format: String,
 
     pub output: Option<String>,
+
+    /// Max assertion retries (default: 2)
+    #[serde(default = "default_two")]
+    pub max_retries: usize,
+
+    /// Delay between assertion retries in ms (default: 500)
+    #[serde(default = "default_500")]
+    pub retry_delay_ms: u64,
+
+    /// Capture screenshots on failure (default: true)
+    #[serde(default = "default_true")]
+    pub screenshot_on_failure: bool,
+
+    /// Directory for screenshots (default: "screenshots")
+    #[serde(default = "default_screenshot_dir")]
+    pub screenshot_dir: String,
 }
 
 impl Default for RunConfig {
@@ -176,6 +192,10 @@ impl Default for RunConfig {
         Self {
             format: "console".to_string(),
             output: None,
+            max_retries: 2,
+            retry_delay_ms: 500,
+            screenshot_on_failure: true,
+            screenshot_dir: "screenshots".to_string(),
         }
     }
 }
@@ -192,6 +212,9 @@ fn default_three() -> usize { 3 }
 fn default_true() -> bool { true }
 fn default_mock() -> String { "mock".to_string() }
 fn default_console() -> String { "console".to_string() }
+fn default_two() -> usize { 2 }
+fn default_500() -> u64 { 500 }
+fn default_screenshot_dir() -> String { "screenshots".to_string() }
 
 // ============================================================================
 // Config File Loading

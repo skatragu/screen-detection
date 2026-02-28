@@ -1,7 +1,7 @@
 use crate::report::report_model::TestSuiteReport;
 
 // ============================================================================
-// HTML reporter — self-contained HTML report
+// HTML reporter — self-contained HTML report with screenshots
 // ============================================================================
 
 /// Generate a self-contained HTML report.
@@ -9,8 +9,9 @@ use crate::report::report_model::TestSuiteReport;
 /// Features:
 /// - Green/red header based on overall pass/fail
 /// - Summary bar with pass/fail/total counts
-/// - Each test case in its own section
+/// - Each test case in its own section with per-test duration
 /// - Failed assertions highlighted in red
+/// - Screenshots on failure embedded as base64 data URIs
 /// - Inline CSS (no external dependencies)
 pub fn generate_html_report(report: &TestSuiteReport) -> String {
     let header_color = if report.all_passed() {
@@ -51,6 +52,22 @@ pub fn generate_html_report(report: &TestSuiteReport) -> String {
             assertions = result.assertion_results.len(),
         ));
 
+        // Show per-test duration
+        if let Some(ms) = result.duration_ms {
+            test_cases.push_str(&format!(
+                "<p class=\"timing\">Duration: {:.1}s</p>\n",
+                ms as f64 / 1000.0
+            ));
+        }
+
+        // Show retry info
+        if result.retry_attempts > 0 {
+            test_cases.push_str(&format!(
+                "<p class=\"timing\">Retries: {} assertion retry attempt(s) used</p>\n",
+                result.retry_attempts
+            ));
+        }
+
         // Show error
         if let Some(ref error) = result.error {
             test_cases.push_str(&format!(
@@ -78,6 +95,17 @@ pub fn generate_html_report(report: &TestSuiteReport) -> String {
             test_cases.push_str("</ul>\n");
         }
 
+        // Embed screenshots on failure as base64 data URIs
+        for screenshot_path in &result.screenshots {
+            if let Ok(bytes) = std::fs::read(screenshot_path) {
+                let b64 = base64_encode(&bytes);
+                test_cases.push_str(&format!(
+                    "<div class=\"screenshot\"><p>Screenshot on failure:</p><img src=\"data:image/png;base64,{}\" /></div>\n",
+                    b64
+                ));
+            }
+        }
+
         test_cases.push_str("</div>\n");
     }
 
@@ -100,8 +128,12 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans
 .test-case h3 {{ margin: 0 0 8px 0; font-size: 16px; }}
 .test-case p {{ margin: 4px 0; color: #666; font-size: 14px; }}
 .test-case .error {{ color: #f44336; font-weight: bold; }}
+.test-case .timing {{ color: #888; font-size: 13px; }}
 .failures {{ margin: 8px 0 0 0; padding-left: 20px; }}
 .failures li {{ color: #c62828; font-size: 13px; margin-bottom: 4px; }}
+.screenshot {{ margin: 12px 0; }}
+.screenshot img {{ max-width: 100%; border: 1px solid #ddd; border-radius: 4px; }}
+.screenshot p {{ font-size: 12px; color: #888; margin: 4px 0; }}
 </style>
 </head>
 <body>
@@ -132,4 +164,29 @@ fn escape_html(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+/// Encode bytes as base64 (no external dependency).
+pub fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let combined = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((combined >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((combined >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((combined >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(combined & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }

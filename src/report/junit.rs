@@ -26,10 +26,16 @@ pub fn generate_junit_xml(report: &TestSuiteReport) -> String {
 
     let mut cases = String::new();
     for result in &report.test_results {
+        let case_time = result
+            .duration_ms
+            .map(|ms| format!(" time=\"{:.3}\"", ms as f64 / 1000.0))
+            .unwrap_or_default();
+
         if result.passed {
             cases.push_str(&format!(
-                "  <testcase name=\"{}\" classname=\"screen-detection\" />\n",
-                escape_xml(&result.spec_name)
+                "  <testcase name=\"{}\" classname=\"screen-detection\"{} />\n",
+                escape_xml(&result.spec_name),
+                case_time
             ));
         } else {
             // Collect failure details
@@ -63,8 +69,9 @@ pub fn generate_junit_xml(report: &TestSuiteReport) -> String {
             };
 
             cases.push_str(&format!(
-                "  <testcase name=\"{name}\" classname=\"screen-detection\">\n    <failure message=\"{message}\" type=\"AssertionFailure\">{body}</failure>\n  </testcase>\n",
+                "  <testcase name=\"{name}\" classname=\"screen-detection\"{time}>\n    <failure message=\"{message}\" type=\"AssertionFailure\">{body}</failure>\n  </testcase>\n",
                 name = escape_xml(&result.spec_name),
+                time = case_time,
                 message = escape_xml(&failure_message),
                 body = escape_xml(&failure_body),
             ));

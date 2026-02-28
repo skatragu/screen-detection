@@ -30,14 +30,27 @@ pub fn format_console_report(report: &TestSuiteReport) -> String {
             "\u{2717} FAIL"
         };
 
+        let duration_str = result
+            .duration_ms
+            .map(|ms| format!(" [{:.1}s]", ms as f64 / 1000.0))
+            .unwrap_or_default();
+
         out.push_str(&format!(
-            "{}  {} ({} steps, {} assertions)\n",
-            marker, result.spec_name, result.steps_run, assertion_count
+            "{}  {} ({} steps, {} assertions){}\n",
+            marker, result.spec_name, result.steps_run, assertion_count, duration_str
         ));
 
         // Show error if the test failed due to execution error
         if let Some(ref error) = result.error {
             out.push_str(&format!("    [ERROR] {}\n", error));
+        }
+
+        // Show retry info
+        if result.retry_attempts > 0 {
+            out.push_str(&format!(
+                "    [RETRY] {} assertion retry attempt(s) used\n",
+                result.retry_attempts
+            ));
         }
 
         // Show failed assertions
