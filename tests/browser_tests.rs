@@ -31,6 +31,12 @@ fn classifier_populates_screen_element_fields() {
             href: None,
             value: None,
             options: None,
+            pattern: None,
+            minlength: None,
+            maxlength: None,
+            min: None,
+            max: None,
+            readonly: false,
         },
         DomElement {
             tag: "button".into(),
@@ -47,6 +53,12 @@ fn classifier_populates_screen_element_fields() {
             href: None,
             value: None,
             options: None,
+            pattern: None,
+            minlength: None,
+            maxlength: None,
+            min: None,
+            max: None,
+            readonly: false,
         },
         DomElement {
             tag: "div".into(),
@@ -63,6 +75,12 @@ fn classifier_populates_screen_element_fields() {
             href: None,
             value: None,
             options: None,
+            pattern: None,
+            minlength: None,
+            maxlength: None,
+            min: None,
+            max: None,
+            readonly: false,
         },
     ];
 
@@ -463,4 +481,43 @@ fn select_option_serde_roundtrip() {
     let json = serde_json::to_string(&opt).unwrap();
     let back: SelectOption = serde_json::from_str(&json).unwrap();
     assert_eq!(opt, back);
+}
+
+// ============================================================================
+// Phase 13: DOM constraint field tests
+// ============================================================================
+
+#[test]
+fn dom_element_deserializes_constraints() {
+    let json = r#"{
+        "tag": "input", "type": "text", "disabled": false, "required": true,
+        "pattern": "[A-Z]+", "minlength": 2, "maxlength": 50,
+        "min": "0", "max": "100", "readonly": true
+    }"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.pattern, Some("[A-Z]+".into()));
+    assert_eq!(el.minlength, Some(2));
+    assert_eq!(el.maxlength, Some(50));
+    assert_eq!(el.min, Some("0".into()));
+    assert_eq!(el.max, Some("100".into()));
+    assert!(el.readonly);
+}
+
+#[test]
+fn dom_element_constraints_default_to_none() {
+    let json = r#"{"tag": "input", "type": "text", "disabled": false, "required": false}"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.pattern, None);
+    assert_eq!(el.minlength, None);
+    assert_eq!(el.maxlength, None);
+    assert_eq!(el.min, None);
+    assert_eq!(el.max, None);
+    assert!(!el.readonly);
+}
+
+#[test]
+fn dom_element_readonly_defaults_false() {
+    let json = r#"{"tag": "input", "disabled": false, "required": false}"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert!(!el.readonly);
 }

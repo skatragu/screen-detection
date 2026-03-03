@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use screen_detection::agent::page_analyzer::{
-    classify_field_type, map_llm_category, try_parse_llm_response, LlmPageAnalyzer,
-    MockPageAnalyzer, PageAnalyzer,
+    classify_field_type, classify_output_semantic, map_llm_category, smart_select_option,
+    try_parse_llm_response, LlmPageAnalyzer, MockPageAnalyzer, PageAnalyzer,
 };
+use screen_detection::screen::screen_model::SelectOption as SmartSelectOption;
 use screen_detection::agent::page_model::{
-    FieldModel, FieldType, FormModel, NavigationTarget, OutputModel, PageCategory, PageModel,
-    SuggestedAssertion,
+    FieldModel, FieldType, FormModel, NavigationTarget, OutputModel, OutputSemantic, PageCategory,
+    PageModel, SuggestedAssertion,
 };
 use screen_detection::screen::screen_model::{
     ElementKind, Form, FormIntent, IntentSignal, ScreenElement,
@@ -35,6 +36,11 @@ fn login_screen() -> ScreenState {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -47,6 +53,11 @@ fn login_screen() -> ScreenState {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
             ],
             actions: vec![ScreenElement {
@@ -60,6 +71,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Sign In".into()),
@@ -72,6 +88,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }),
             intent: Some(FormIntent {
                 label: "Authentication".into(),
@@ -94,6 +115,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             },
             ScreenElement {
                 label: Some("Forgot Password".into()),
@@ -106,6 +132,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             },
         ],
         outputs: vec![],
@@ -130,6 +161,11 @@ fn search_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             actions: vec![ScreenElement {
                 label: Some("Search".into()),
@@ -142,6 +178,11 @@ fn search_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Search".into()),
@@ -154,6 +195,11 @@ fn search_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }),
             intent: Some(FormIntent {
                 label: "Search".into(),
@@ -204,6 +250,7 @@ fn sample_page_model() -> PageModel {
         outputs: vec![OutputModel {
             description: "Welcome message".into(),
             region: "main".into(),
+            semantic: OutputSemantic::Info,
         }],
         suggested_assertions: vec![SuggestedAssertion {
             assertion_type: "title_contains".into(),
@@ -837,6 +884,11 @@ fn mock_analyzer_extracts_required() {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             actions: vec![],
             primary_action: None,
@@ -875,6 +927,11 @@ fn mock_analyzer_select_uses_first_option() {
                     SelectOption { value: "us".into(), text: "United States".into() },
                     SelectOption { value: "ca".into(), text: "Canada".into() },
                 ]),
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             actions: vec![],
             primary_action: None,
@@ -927,4 +984,241 @@ fn field_type_serde_new_variants() {
         let back: FieldType = serde_json::from_str(&json).unwrap();
         assert_eq!(*variant, back);
     }
+}
+
+// ============================================================================
+// Phase 13: Smart Dropdown Selection
+// ============================================================================
+
+#[test]
+fn smart_select_skips_empty_value_placeholder() {
+    let options = vec![
+        SmartSelectOption { value: "".into(), text: "Select...".into() },
+        SmartSelectOption { value: "us".into(), text: "United States".into() },
+    ];
+    let selected = smart_select_option(&options).unwrap();
+    assert_eq!(selected.value, "us");
+}
+
+#[test]
+fn smart_select_skips_choose_text() {
+    let options = vec![
+        SmartSelectOption { value: "".into(), text: "Choose a country".into() },
+        SmartSelectOption { value: "uk".into(), text: "UK".into() },
+    ];
+    let selected = smart_select_option(&options).unwrap();
+    assert_eq!(selected.value, "uk");
+}
+
+#[test]
+fn smart_select_skips_dashes_placeholder() {
+    let options = vec![
+        SmartSelectOption { value: "".into(), text: "-- Select --".into() },
+        SmartSelectOption { value: "ca".into(), text: "Canada".into() },
+    ];
+    let selected = smart_select_option(&options).unwrap();
+    assert_eq!(selected.value, "ca");
+}
+
+#[test]
+fn smart_select_skips_please_select() {
+    let options = vec![
+        SmartSelectOption { value: "".into(), text: "Please select".into() },
+        SmartSelectOption { value: "fr".into(), text: "France".into() },
+    ];
+    let selected = smart_select_option(&options).unwrap();
+    assert_eq!(selected.value, "fr");
+}
+
+#[test]
+fn smart_select_falls_back_to_first() {
+    let options = vec![
+        SmartSelectOption { value: "".into(), text: "Select...".into() },
+        SmartSelectOption { value: "".into(), text: "Choose...".into() },
+    ];
+    let selected = smart_select_option(&options).unwrap();
+    assert_eq!(selected.text, "Select...");
+}
+
+#[test]
+fn smart_select_with_no_placeholder() {
+    let options = vec![
+        SmartSelectOption { value: "us".into(), text: "US".into() },
+        SmartSelectOption { value: "uk".into(), text: "UK".into() },
+    ];
+    let selected = smart_select_option(&options).unwrap();
+    assert_eq!(selected.value, "us");
+}
+
+// ============================================================================
+// Phase 13: Output Semantic Classification
+// ============================================================================
+
+#[test]
+fn classify_output_semantic_error_patterns() {
+    assert_eq!(classify_output_semantic("Invalid password"), OutputSemantic::Error);
+    assert_eq!(classify_output_semantic("Error: something failed"), OutputSemantic::Error);
+    assert_eq!(classify_output_semantic("Page Not Found"), OutputSemantic::Error);
+    assert_eq!(classify_output_semantic("Access denied"), OutputSemantic::Error);
+}
+
+#[test]
+fn classify_output_semantic_success_patterns() {
+    assert_eq!(classify_output_semantic("Account created successfully"), OutputSemantic::Success);
+    assert_eq!(classify_output_semantic("Welcome back, user!"), OutputSemantic::Success);
+    assert_eq!(classify_output_semantic("Settings saved"), OutputSemantic::Success);
+    assert_eq!(classify_output_semantic("Thank you for signing up"), OutputSemantic::Success);
+}
+
+#[test]
+fn classify_output_semantic_warning_patterns() {
+    assert_eq!(classify_output_semantic("Warning: session about to expire"), OutputSemantic::Warning);
+    assert_eq!(classify_output_semantic("Use caution when deleting"), OutputSemantic::Warning);
+}
+
+#[test]
+fn classify_output_semantic_info_default() {
+    assert_eq!(classify_output_semantic("Hello world"), OutputSemantic::Info);
+    assert_eq!(classify_output_semantic("Product details"), OutputSemantic::Info);
+}
+
+#[test]
+fn classify_output_semantic_navigation() {
+    assert_eq!(classify_output_semantic("Home"), OutputSemantic::Navigation);
+    assert_eq!(classify_output_semantic("Page 2 of 5"), OutputSemantic::Navigation);
+}
+
+#[test]
+fn output_semantic_serde_roundtrip() {
+    let semantics = vec![
+        OutputSemantic::Success, OutputSemantic::Error, OutputSemantic::Warning,
+        OutputSemantic::Info, OutputSemantic::Data, OutputSemantic::Navigation,
+    ];
+    for s in &semantics {
+        let json = serde_json::to_string(s).unwrap();
+        let back: OutputSemantic = serde_json::from_str(&json).unwrap();
+        assert_eq!(*s, back);
+    }
+}
+
+#[test]
+fn output_model_backward_compat() {
+    // JSON without semantic field should deserialize with default Info
+    let json = r#"{"description":"Hello","region":"main"}"#;
+    let model: OutputModel = serde_json::from_str(json).unwrap();
+    assert_eq!(model.semantic, OutputSemantic::Info);
+}
+
+#[test]
+fn mock_analyzer_classifies_output_semantics() {
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![],
+        standalone_actions: vec![],
+        outputs: vec![
+            ScreenElement {
+                label: Some("Error: Invalid input".into()),
+                kind: ElementKind::Output, tag: Some("div".into()),
+                role: None, input_type: None, required: false,
+                placeholder: None, id: None, href: None, options: None,
+                name: None, value: None, maxlength: None, minlength: None, readonly: false,
+            },
+            ScreenElement {
+                label: Some("Welcome back!".into()),
+                kind: ElementKind::Output, tag: Some("div".into()),
+                role: None, input_type: None, required: false,
+                placeholder: None, id: None, href: None, options: None,
+                name: None, value: None, maxlength: None, minlength: None, readonly: false,
+            },
+        ],
+        identities: HashMap::new(),
+    };
+    let model = MockPageAnalyzer.analyze(&screen).unwrap();
+    assert_eq!(model.outputs.len(), 2);
+    assert_eq!(model.outputs[0].semantic, OutputSemantic::Error);
+    assert_eq!(model.outputs[1].semantic, OutputSemantic::Success);
+}
+
+// ============================================================================
+// Phase 13: Readonly input filtering in MockPageAnalyzer
+// ============================================================================
+
+#[test]
+fn mock_analyzer_skips_readonly_inputs() {
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![Form {
+            id: "f".into(), intent: None,
+            inputs: vec![
+                ScreenElement {
+                    label: Some("Name".into()), kind: ElementKind::Input,
+                    tag: Some("input".into()), role: None, input_type: Some("text".into()),
+                    required: false, placeholder: None, id: None, href: None, options: None,
+                    name: None, value: None, maxlength: None, minlength: None, readonly: true,
+                },
+                ScreenElement {
+                    label: Some("Email".into()), kind: ElementKind::Input,
+                    tag: Some("input".into()), role: None, input_type: Some("email".into()),
+                    required: false, placeholder: None, id: None, href: None, options: None,
+                    name: None, value: None, maxlength: None, minlength: None, readonly: false,
+                },
+            ],
+            actions: vec![], primary_action: None,
+        }],
+        standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    let model = MockPageAnalyzer.analyze(&screen).unwrap();
+    assert_eq!(model.forms[0].fields.len(), 1, "Readonly input should be filtered");
+    assert_eq!(model.forms[0].fields[0].label, "Email");
+}
+
+#[test]
+fn mock_analyzer_includes_non_readonly_inputs() {
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test".into(),
+        forms: vec![Form {
+            id: "f".into(), intent: None,
+            inputs: vec![
+                ScreenElement {
+                    label: Some("Name".into()), kind: ElementKind::Input,
+                    tag: Some("input".into()), role: None, input_type: Some("text".into()),
+                    required: false, placeholder: None, id: None, href: None, options: None,
+                    name: None, value: None, maxlength: None, minlength: None, readonly: false,
+                },
+                ScreenElement {
+                    label: Some("Email".into()), kind: ElementKind::Input,
+                    tag: Some("input".into()), role: None, input_type: Some("email".into()),
+                    required: false, placeholder: None, id: None, href: None, options: None,
+                    name: None, value: None, maxlength: None, minlength: None, readonly: false,
+                },
+            ],
+            actions: vec![], primary_action: None,
+        }],
+        standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    let model = MockPageAnalyzer.analyze(&screen).unwrap();
+    assert_eq!(model.forms[0].fields.len(), 2, "Both non-readonly inputs should be included");
+}
+
+#[test]
+fn screen_element_carries_constraints() {
+    use screen_detection::screen::classifier::classify;
+    let elements = vec![screen_detection::screen::screen_model::DomElement {
+        tag: "input".into(), text: None, role: Some("textbox".into()),
+        r#type: Some("text".into()), aria_label: Some("Username".into()),
+        disabled: false, required: false, form_id: Some("f".into()),
+        id: None, name: Some("user".into()), placeholder: None, href: None,
+        value: Some("val".into()), options: None,
+        pattern: Some("[A-Z]+".into()), minlength: Some(3), maxlength: Some(20),
+        min: None, max: None, readonly: false,
+    }];
+    let semantics = classify(&elements);
+    let form = semantics.forms.iter().find(|f| f.id == "f").unwrap();
+    assert_eq!(form.inputs[0].maxlength, Some(20));
+    assert_eq!(form.inputs[0].minlength, Some(3));
+    assert_eq!(form.inputs[0].name, Some("user".into()));
+    assert_eq!(form.inputs[0].value, Some("val".into()));
 }

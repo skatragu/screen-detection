@@ -194,25 +194,55 @@ pub fn explore_live(
 // Form submission helper
 // ============================================================================
 
+/// Build a SelectorHint appropriate for a field's type.
+///
+/// Maps FieldType to the correct ARIA role, HTML tag, and input_type so
+/// Playwright can locate the element correctly.
+pub fn build_selector_for_field(field: &crate::agent::page_model::FieldModel, form_id: &str) -> SelectorHint {
+    let (role, tag, input_type) = match field.field_type {
+        FieldType::Select => (Some("combobox".into()), Some("select".into()), None),
+        FieldType::Textarea => (Some("textbox".into()), Some("textarea".into()), None),
+        FieldType::Checkbox => (Some("checkbox".into()), Some("input".into()), Some("checkbox".into())),
+        FieldType::Radio => (Some("radio".into()), Some("input".into()), Some("radio".into())),
+        FieldType::Email => (Some("textbox".into()), Some("input".into()), Some("email".into())),
+        FieldType::Password => (Some("textbox".into()), Some("input".into()), Some("password".into())),
+        FieldType::Number => (Some("spinbutton".into()), Some("input".into()), Some("number".into())),
+        FieldType::Tel => (Some("textbox".into()), Some("input".into()), Some("tel".into())),
+        FieldType::Search => (Some("searchbox".into()), Some("input".into()), Some("search".into())),
+        FieldType::Date => (None, Some("input".into()), Some("date".into())),
+        FieldType::Time => (None, Some("input".into()), Some("time".into())),
+        FieldType::Url => (Some("textbox".into()), Some("input".into()), Some("url".into())),
+        _ => (Some("textbox".into()), Some("input".into()), None),
+    };
+
+    SelectorHint {
+        role,
+        name: Some(field.label.clone()),
+        tag,
+        input_type,
+        form_id: Some(form_id.to_string()),
+    }
+}
+
 /// Fill and submit a form via BrowserSession.
 ///
-/// Fills each field using SelectorHint targeting, then clicks the submit button.
-/// Returns Ok(()) on success, Err on browser action failure.
+/// Fills each field using field-type-aware SelectorHint targeting, then clicks
+/// the submit button. Skips hidden fields. Returns Ok(()) on success, Err on
+/// browser action failure.
 fn submit_form_in_session(
     session: &mut BrowserSession,
     form: &FormModel,
 ) -> Result<(), AgentError> {
     for field in &form.fields {
-        let selector = SelectorHint {
-            role: Some("textbox".into()),
-            name: Some(field.label.clone()),
-            tag: Some("input".into()),
-            input_type: None,
-            form_id: Some(form.form_id.clone()),
-        };
+        // Skip hidden fields — agent can't interact with them
+        if field.field_type == FieldType::Hidden {
+            continue;
+        }
+
+        let selector = build_selector_for_field(field, &form.form_id);
         match field.field_type {
             FieldType::Select => session.select_option(&selector, &field.suggested_test_value)?,
-            FieldType::Checkbox => session.check(&selector)?,
+            FieldType::Checkbox | FieldType::Radio => session.check(&selector)?,
             _ => session.fill(&selector, &field.suggested_test_value)?,
         }
     }

@@ -7,7 +7,7 @@ use screen_detection::agent::page_model::{
 use screen_detection::explorer::app_map::{
     AppMap, ExplorerConfig, Flow, FlowStep, PageNode, Transition, TransitionKind,
 };
-use screen_detection::explorer::explorer::{explore, is_same_origin, resolve_url};
+use screen_detection::explorer::explorer::{build_selector_for_field, explore, is_same_origin, resolve_url};
 use screen_detection::explorer::flow_detector::detect_flows;
 use screen_detection::explorer::test_generator::{
     generate_flow_tests, generate_form_test, generate_smoke_test, generate_test_plan,
@@ -41,6 +41,11 @@ fn login_screen() -> ScreenState {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -53,6 +58,11 @@ fn login_screen() -> ScreenState {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
             ],
             actions: vec![ScreenElement {
@@ -66,6 +76,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Sign In".into()),
@@ -78,6 +93,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }),
             intent: Some(FormIntent {
                 label: "Authentication".into(),
@@ -100,6 +120,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             },
             ScreenElement {
                 label: Some("Forgot Password".into()),
@@ -112,6 +137,11 @@ fn login_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             },
         ],
         outputs: vec![],
@@ -136,6 +166,11 @@ fn search_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             actions: vec![ScreenElement {
                 label: Some("Search".into()),
@@ -148,6 +183,11 @@ fn search_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Search".into()),
@@ -160,6 +200,11 @@ fn search_screen() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }),
             intent: Some(FormIntent {
                 label: "Search".into(),
@@ -1090,4 +1135,78 @@ fn generate_test_plan_includes_flows() {
     assert_eq!(form_count, 1);
     assert_eq!(flow_count, 1);
     assert_eq!(specs.len(), 4);
+}
+
+// ============================================================================
+// Phase 13: Field-Type-Aware SelectorHint Builder
+// ============================================================================
+
+#[test]
+fn build_selector_for_text_field() {
+    let field = FieldModel { label: "Name".into(), field_type: FieldType::Text, required: false, suggested_test_value: "test".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("textbox".into()));
+    assert_eq!(s.tag, Some("input".into()));
+    assert_eq!(s.input_type, None);
+    assert_eq!(s.name, Some("Name".into()));
+}
+
+#[test]
+fn build_selector_for_select_field() {
+    let field = FieldModel { label: "Country".into(), field_type: FieldType::Select, required: false, suggested_test_value: "us".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("combobox".into()));
+    assert_eq!(s.tag, Some("select".into()));
+    assert_eq!(s.input_type, None);
+}
+
+#[test]
+fn build_selector_for_textarea_field() {
+    let field = FieldModel { label: "Comment".into(), field_type: FieldType::Textarea, required: false, suggested_test_value: "text".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("textbox".into()));
+    assert_eq!(s.tag, Some("textarea".into()));
+}
+
+#[test]
+fn build_selector_for_checkbox_field() {
+    let field = FieldModel { label: "Agree".into(), field_type: FieldType::Checkbox, required: false, suggested_test_value: "true".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("checkbox".into()));
+    assert_eq!(s.tag, Some("input".into()));
+    assert_eq!(s.input_type, Some("checkbox".into()));
+}
+
+#[test]
+fn build_selector_for_radio_field() {
+    let field = FieldModel { label: "Gender".into(), field_type: FieldType::Radio, required: false, suggested_test_value: "male".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("radio".into()));
+    assert_eq!(s.tag, Some("input".into()));
+    assert_eq!(s.input_type, Some("radio".into()));
+}
+
+#[test]
+fn build_selector_for_email_field() {
+    let field = FieldModel { label: "Email".into(), field_type: FieldType::Email, required: false, suggested_test_value: "a@b.com".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("textbox".into()));
+    assert_eq!(s.tag, Some("input".into()));
+    assert_eq!(s.input_type, Some("email".into()));
+}
+
+#[test]
+fn build_selector_for_password_field() {
+    let field = FieldModel { label: "Password".into(), field_type: FieldType::Password, required: false, suggested_test_value: "pass".into() };
+    let s = build_selector_for_field(&field, "f1");
+    assert_eq!(s.role, Some("textbox".into()));
+    assert_eq!(s.tag, Some("input".into()));
+    assert_eq!(s.input_type, Some("password".into()));
+}
+
+#[test]
+fn build_selector_includes_form_id() {
+    let field = FieldModel { label: "X".into(), field_type: FieldType::Text, required: false, suggested_test_value: "y".into() };
+    let s = build_selector_for_field(&field, "my_form");
+    assert_eq!(s.form_id, Some("my_form".into()));
 }

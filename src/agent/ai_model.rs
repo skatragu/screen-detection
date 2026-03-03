@@ -5,6 +5,7 @@ use crate::{
     agent::page_model::PageCategory,
     canonical::diff::SemanticSignal,
     canonical::diff::SemanticStateDiff,
+    screen::screen_model::Form,
     state::state_model::ScreenState,
 };
 use serde::{Deserialize, Serialize};
@@ -191,6 +192,123 @@ pub fn guess_value(label: &str, input_type: Option<&str>, category: Option<&Page
     "test".into()
 }
 
+/// Generate a test value respecting field constraints.
+///
+/// Wraps `guess_value()` and truncates the result to `maxlength` if specified.
+/// Pads with `'x'` to `minlength` if the value is too short.
+pub fn constrained_value(
+    label: &str,
+    input_type: Option<&str>,
+    category: Option<&PageCategory>,
+    maxlength: Option<u32>,
+    minlength: Option<u32>,
+) -> String {
+    let mut value = guess_value(label, input_type, category);
+
+    // Respect maxlength
+    if let Some(max) = maxlength {
+        let max = max as usize;
+        if value.len() > max {
+            value = value.chars().take(max).collect();
+        }
+    }
+
+    // Ensure minlength (pad with 'x' if needed)
+    if let Some(min) = minlength {
+        let min = min as usize;
+        while value.len() < min {
+            value.push('x');
+        }
+    }
+
+    value
+}
+
+/// Score a form for interaction priority. Higher = more important.
+///
+/// Considers: number of inputs (up to 0.5), primary action presence (0.3),
+/// and intent confidence (up to 0.3). Returns 0.0 for forms with no inputs
+/// and no actions.
+pub fn rank_form(form: &Form) -> f32 {
+    let mut score: f32 = 0.0;
+
+    // More inputs = more significant form
+    let input_count = form.inputs.len() as f32;
+    score += input_count.min(5.0) * 0.1; // up to 0.5 for inputs
+
+    // Has a primary action (submit button) = more likely the main form
+    if form.primary_action.is_some() {
+        score += 0.3;
+    } else if !form.actions.is_empty() {
+        score += 0.1;
+    }
+
+    // Intent confidence boost
+    if let Some(intent) = &form.intent {
+        score += intent.confidence * 0.3; // up to 0.3
+    }
+
+    score
+}
+
+/// Select the best form to interact with from a list of forms.
+///
+/// Filters to forms with at least one input or action, then picks the
+/// highest-ranked form. Returns None if no forms are available.
+pub fn select_best_form(forms: &[Form]) -> Option<&Form> {
+    forms
+        .iter()
+        .filter(|f| !f.inputs.is_empty() || !f.actions.is_empty())
+        .max_by(|a, b| {
+            rank_form(a)
+                .partial_cmp(&rank_form(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+/// Infer page category from screen state.
+///
+/// Simplified version of `classify_page_category` from `page_analyzer.rs`
+/// that can be used directly in `DeterministicPolicy::decide()` without
+/// creating a circular import.
+pub fn infer_page_category(screen: &ScreenState) -> PageCategory {
+    // Check form intents first
+    for form in &screen.forms {
+        if let Some(intent) = &form.intent {
+            let label = intent.label.to_lowercase();
+            if label.contains("auth") || label.contains("login") || label.contains("sign in") {
+                return PageCategory::Login;
+            }
+            if label.contains("register") || label.contains("sign up") || label.contains("create account") {
+                return PageCategory::Registration;
+            }
+            if label.contains("search") {
+                return PageCategory::Search;
+            }
+        }
+    }
+
+    // Fall back to title-based classification
+    let title = screen.title.to_lowercase();
+    if title.contains("login") || title.contains("sign in") {
+        PageCategory::Login
+    } else if title.contains("register") || title.contains("sign up") {
+        PageCategory::Registration
+    } else if title.contains("search") {
+        PageCategory::Search
+    } else if title.contains("dashboard") {
+        PageCategory::Dashboard
+    } else if title.contains("settings") || title.contains("preferences") {
+        PageCategory::Settings
+    } else if title.contains("checkout") || title.contains("payment") {
+        PageCategory::Checkout
+    } else if title.contains("error") || title.contains("404") || title.contains("not found") {
+        PageCategory::Error
+    } else {
+        PageCategory::Other
+    }
+}
+
 impl Policy for DeterministicPolicy {
     fn decide(
         &self,
@@ -202,14 +320,17 @@ impl Policy for DeterministicPolicy {
 
         let (decision_type, action) = match signal {
             SemanticSignal::ScreenLoaded => {
-                let form = screen.forms.first()?;
+                let form = select_best_form(&screen.forms)?;
+
+                // Compute page category for context-aware value filling
+                let category = infer_page_category(screen);
 
                 let values: Vec<(String, String)> = form
                     .inputs
                     .iter()
                     .map(|input| {
                         let label = input.label.clone().unwrap_or_default();
-                        let value = guess_value(&label, input.input_type.as_deref(), None);
+                        let value = guess_value(&label, input.input_type.as_deref(), Some(&category));
                         (label, value)
                     })
                     .collect();

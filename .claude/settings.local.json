@@ -3,7 +3,11 @@
     "allow": [
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(powershell -c \"\\(Get-Content C:\\\\Users\\\\skatr\\\\sandbox\\\\preksha\\\\rust\\\\screen-detection\\\\tests\\\\agent_tests.rs\\).Count\")",
+      "Bash(powershell -c \"\\(Get-Content C:\\\\Users\\\\skatr\\\\sandbox\\\\preksha\\\\rust\\\\screen-detection\\\\tests\\\\browser_tests.rs\\).Count\")",
+      "Bash(powershell -c:*)"
     ]
   }
 }

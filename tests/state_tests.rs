@@ -61,6 +61,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         actions: vec![ScreenElement {
             label: Some("Submit".into()),
@@ -73,6 +78,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         primary_action: None,
         intent: None,
@@ -95,6 +105,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         actions: vec![ScreenElement {
             label: Some("Submit".into()),
@@ -107,6 +122,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         primary_action: None,
         intent: None,
@@ -128,6 +148,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         actions: vec![ScreenElement {
             label: Some("Login".into()),
@@ -140,6 +165,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         primary_action: None,
         intent: None,
@@ -161,6 +191,11 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         actions: vec![ScreenElement {
             label: Some("Sign In".into()),
@@ -173,11 +208,52 @@ fn form_intent_scoring_boundaries() {
             id: None,
             href: None,
             options: None,
+            name: None,
+            value: None,
+            maxlength: None,
+            minlength: None,
+            readonly: false,
         }],
         primary_action: None,
         intent: None,
     };
     let intent = infer_form_intent(&auth_form);
-    assert_eq!(intent.label, "Authentication", "Password + Sign In â†’ Authentication");
+    assert_eq!(intent.label, "Authentication", "Password + Sign In â†' Authentication");
     assert!(intent.confidence > 0.7, "Confidence should exceed 0.7");
+}
+
+// =========================================================================
+// Phase 13: ScreenElement carries constraint fields
+// =========================================================================
+
+#[test]
+fn screen_element_carries_maxlength() {
+    use screen_detection::screen::classifier::classify;
+    use screen_detection::screen::screen_model::DomElement;
+    let elements = vec![DomElement {
+        tag: "input".into(), text: None, role: Some("textbox".into()),
+        r#type: Some("text".into()), aria_label: Some("Code".into()),
+        disabled: false, required: false, form_id: Some("f".into()),
+        id: None, name: None, placeholder: None, href: None, value: None, options: None,
+        pattern: None, minlength: None, maxlength: Some(10), min: None, max: None, readonly: false,
+    }];
+    let semantics = classify(&elements);
+    let form = semantics.forms.iter().find(|f| f.id == "f").unwrap();
+    assert_eq!(form.inputs[0].maxlength, Some(10));
+}
+
+#[test]
+fn screen_element_carries_minlength() {
+    use screen_detection::screen::classifier::classify;
+    use screen_detection::screen::screen_model::DomElement;
+    let elements = vec![DomElement {
+        tag: "input".into(), text: None, role: Some("textbox".into()),
+        r#type: Some("text".into()), aria_label: Some("Code".into()),
+        disabled: false, required: false, form_id: Some("f".into()),
+        id: None, name: None, placeholder: None, href: None, value: None, options: None,
+        pattern: None, minlength: Some(3), maxlength: None, min: None, max: None, readonly: false,
+    }];
+    let semantics = classify(&elements);
+    let form = semantics.forms.iter().find(|f| f.id == "f").unwrap();
+    assert_eq!(form.inputs[0].minlength, Some(3));
 }

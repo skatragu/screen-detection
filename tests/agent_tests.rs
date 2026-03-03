@@ -5,7 +5,7 @@ use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision},
-        ai_model::{DeterministicPolicy, guess_value},
+        ai_model::{DeterministicPolicy, constrained_value, guess_value, infer_page_category, rank_form, select_best_form},
         page_model::PageCategory,
         budget::{BudgetDecision, check_budgets},
         error::AgentError,
@@ -17,7 +17,7 @@ use screen_detection::{
     },
     screen::{
         classifier::classify,
-        screen_model::{DomElement, ElementKind, Form, ScreenElement},
+        screen_model::{DomElement, ElementKind, Form, FormIntent, IntentSignal, ScreenElement},
     },
     state::{
         state_builder::build_state,
@@ -71,6 +71,11 @@ fn mock_screen_with_form() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             actions: vec![ScreenElement {
                 label: Some("Sign In".into()),
@@ -83,6 +88,11 @@ fn mock_screen_with_form() -> ScreenState {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: None,
             intent: None,
@@ -499,6 +509,11 @@ fn deterministic_policy_multi_input_form() {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -511,6 +526,11 @@ fn deterministic_policy_multi_input_form() {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
                 ScreenElement {
                     label: Some("Phone".into()),
@@ -523,6 +543,11 @@ fn deterministic_policy_multi_input_form() {
                     id: None,
                     href: None,
                     options: None,
+                    name: None,
+                    value: None,
+                    maxlength: None,
+                    minlength: None,
+                    readonly: false,
                 },
             ],
             actions: vec![ScreenElement {
@@ -536,6 +561,11 @@ fn deterministic_policy_multi_input_form() {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: None,
             intent: None,
@@ -732,6 +762,11 @@ fn deterministic_policy_form_no_inputs_still_submits() {
                 id: None,
                 href: None,
                 options: None,
+                name: None,
+                value: None,
+                maxlength: None,
+                minlength: None,
+                readonly: false,
             }],
             primary_action: None,
             intent: None,
@@ -1072,4 +1107,317 @@ fn guess_value_no_category_falls_through() {
     assert_eq!(guess_value("Email", None, None), "user@example.com");
     assert_eq!(guess_value("City", None, None), "Springfield");
     assert_eq!(guess_value("State", None, None), "CA");
+}
+
+// ============================================================================
+// Phase 13: Smart Form Ranking
+// ============================================================================
+
+#[test]
+fn rank_form_scores_inputs() {
+    let small_form = Form {
+        id: "small".into(),
+        inputs: vec![ScreenElement {
+            label: Some("Email".into()),
+            kind: ElementKind::Input,
+            tag: Some("input".into()),
+            role: None, input_type: None, required: false,
+            placeholder: None, id: None, href: None, options: None,
+            name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        }],
+        actions: vec![], primary_action: None, intent: None,
+    };
+    let big_form = Form {
+        id: "big".into(),
+        inputs: vec![
+            ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+            ScreenElement { label: Some("Password".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+            ScreenElement { label: Some("Name".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+        ],
+        actions: vec![], primary_action: None, intent: None,
+    };
+    assert!(rank_form(&big_form) > rank_form(&small_form));
+}
+
+#[test]
+fn rank_form_scores_primary_action() {
+    let with_action = Form {
+        id: "a".into(),
+        inputs: vec![ScreenElement {
+            label: Some("X".into()), kind: ElementKind::Input, tag: Some("input".into()),
+            role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
+            name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        }],
+        actions: vec![],
+        primary_action: Some(ScreenElement {
+            label: Some("Submit".into()), kind: ElementKind::Action, tag: Some("button".into()),
+            role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
+            name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        }),
+        intent: None,
+    };
+    let without_action = Form {
+        id: "b".into(),
+        inputs: vec![ScreenElement {
+            label: Some("X".into()), kind: ElementKind::Input, tag: Some("input".into()),
+            role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
+            name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        }],
+        actions: vec![], primary_action: None, intent: None,
+    };
+    assert!(rank_form(&with_action) > rank_form(&without_action));
+}
+
+#[test]
+fn rank_form_scores_intent_confidence() {
+    let high_intent = Form {
+        id: "a".into(), inputs: vec![], actions: vec![],
+        primary_action: None,
+        intent: Some(FormIntent { label: "Auth".into(), confidence: 0.8, signals: vec![] }),
+    };
+    let low_intent = Form {
+        id: "b".into(), inputs: vec![], actions: vec![],
+        primary_action: None,
+        intent: Some(FormIntent { label: "Unknown".into(), confidence: 0.2, signals: vec![] }),
+    };
+    assert!(rank_form(&high_intent) > rank_form(&low_intent));
+}
+
+#[test]
+fn rank_form_empty_form_scores_zero() {
+    let empty = Form {
+        id: "e".into(), inputs: vec![], actions: vec![],
+        primary_action: None, intent: None,
+    };
+    assert_eq!(rank_form(&empty), 0.0);
+}
+
+#[test]
+fn select_best_form_chooses_login_over_newsletter() {
+    let newsletter = Form {
+        id: "newsletter".into(),
+        inputs: vec![ScreenElement {
+            label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()),
+            role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None,
+            name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        }],
+        actions: vec![], primary_action: None, intent: None,
+    };
+    let login = Form {
+        id: "login".into(),
+        inputs: vec![
+            ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+            ScreenElement { label: Some("Password".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("password".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+        ],
+        actions: vec![],
+        primary_action: Some(ScreenElement {
+            label: Some("Sign In".into()), kind: ElementKind::Action, tag: Some("button".into()),
+            role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
+            name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        }),
+        intent: Some(FormIntent { label: "Authentication".into(), confidence: 0.8, signals: vec![IntentSignal::InputType("password".into())] }),
+    };
+    let forms = vec![newsletter, login];
+    let best = select_best_form(&forms).unwrap();
+    assert_eq!(best.id, "login");
+}
+
+#[test]
+fn select_best_form_returns_none_for_empty() {
+    let forms: Vec<Form> = vec![];
+    assert!(select_best_form(&forms).is_none());
+}
+
+#[test]
+fn deterministic_policy_uses_page_category() {
+    // Login-titled page should produce Login-context values
+    let screen = ScreenState {
+        url: Some("https://example.com/login".into()),
+        title: "Login - App".into(),
+        forms: vec![Form {
+            id: "login".into(),
+            inputs: vec![ScreenElement {
+                label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()),
+                role: Some("textbox".into()), input_type: Some("email".into()),
+                required: false, placeholder: None, id: None, href: None, options: None,
+                name: None, value: None, maxlength: None, minlength: None, readonly: false,
+            }],
+            actions: vec![ScreenElement {
+                label: Some("Sign In".into()), kind: ElementKind::Action, tag: Some("button".into()),
+                role: Some("button".into()), input_type: Some("submit".into()),
+                required: false, placeholder: None, id: None, href: None, options: None,
+                name: None, value: None, maxlength: None, minlength: None, readonly: false,
+            }],
+            primary_action: None, intent: None,
+        }],
+        standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    let diff = SemanticStateDiff {
+        forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
+        standalone_actions: ActionDiff { added: vec![], removed: vec![] },
+        outputs: OutputDiff { added: vec![], removed: vec![] },
+        signals: vec![SemanticSignal::ScreenLoaded],
+    };
+    let policy = DeterministicPolicy;
+    let memory = AgentMemory::default();
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    // Should produce Login-context email value
+    if let Some(AgentAction::FillAndSubmitForm { values, .. }) = &decision.next_action {
+        let email_val = values.iter().find(|(l, _)| l == "Email").map(|(_, v)| v.as_str());
+        assert_eq!(email_val, Some("testuser@example.com"), "Login context should produce testuser@example.com");
+    } else {
+        panic!("Expected FillAndSubmitForm action");
+    }
+}
+
+#[test]
+fn deterministic_policy_selects_main_form() {
+    // Page with 2 forms — small newsletter + larger login
+    let screen = ScreenState {
+        url: Some("https://example.com".into()),
+        title: "Test Page".into(),
+        forms: vec![
+            Form {
+                id: "newsletter".into(),
+                inputs: vec![ScreenElement {
+                    label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()),
+                    role: None, input_type: Some("email".into()),
+                    required: false, placeholder: None, id: None, href: None, options: None,
+                    name: None, value: None, maxlength: None, minlength: None, readonly: false,
+                }],
+                actions: vec![], primary_action: None, intent: None,
+            },
+            Form {
+                id: "contact".into(),
+                inputs: vec![
+                    ScreenElement { label: Some("Name".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("text".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+                    ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+                    ScreenElement { label: Some("Message".into()), kind: ElementKind::Input, tag: Some("textarea".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+                ],
+                actions: vec![],
+                primary_action: Some(ScreenElement {
+                    label: Some("Send".into()), kind: ElementKind::Action, tag: Some("button".into()),
+                    role: None, input_type: Some("submit".into()),
+                    required: false, placeholder: None, id: None, href: None, options: None,
+                    name: None, value: None, maxlength: None, minlength: None, readonly: false,
+                }),
+                intent: None,
+            },
+        ],
+        standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    let diff = SemanticStateDiff {
+        forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
+        standalone_actions: ActionDiff { added: vec![], removed: vec![] },
+        outputs: OutputDiff { added: vec![], removed: vec![] },
+        signals: vec![SemanticSignal::ScreenLoaded],
+    };
+    let policy = DeterministicPolicy;
+    let memory = AgentMemory::default();
+    let decision = policy.decide(&screen, &diff, &memory).unwrap();
+    if let Some(AgentAction::FillAndSubmitForm { form_id, .. }) = &decision.next_action {
+        assert_eq!(form_id, "contact", "Should select the larger contact form over newsletter");
+    } else {
+        panic!("Expected FillAndSubmitForm action");
+    }
+}
+
+// ============================================================================
+// Phase 13: Disabled input filtering
+// ============================================================================
+
+#[test]
+fn disabled_input_excluded_from_form() {
+    let elements = vec![
+        DomElement {
+            tag: "input".into(), text: None, role: Some("textbox".into()),
+            r#type: Some("text".into()), aria_label: Some("Name".into()),
+            disabled: true, required: false, form_id: Some("f".into()),
+            id: None, name: None, placeholder: None, href: None, value: None, options: None,
+            pattern: None, minlength: None, maxlength: None, min: None, max: None, readonly: false,
+        },
+        DomElement {
+            tag: "input".into(), text: None, role: Some("textbox".into()),
+            r#type: Some("email".into()), aria_label: Some("Email".into()),
+            disabled: false, required: false, form_id: Some("f".into()),
+            id: None, name: None, placeholder: None, href: None, value: None, options: None,
+            pattern: None, minlength: None, maxlength: None, min: None, max: None, readonly: false,
+        },
+    ];
+    let semantics = classify(&elements);
+    let form = semantics.forms.iter().find(|f| f.id == "f").unwrap();
+    assert_eq!(form.inputs.len(), 1, "Disabled input should be excluded");
+    assert_eq!(form.inputs[0].label, Some("Email".into()));
+}
+
+#[test]
+fn screen_element_carries_name_and_value() {
+    let elements = vec![DomElement {
+        tag: "input".into(), text: None, role: Some("textbox".into()),
+        r#type: Some("text".into()), aria_label: Some("Username".into()),
+        disabled: false, required: false, form_id: Some("f".into()),
+        id: Some("user_id".into()), name: Some("username".into()),
+        placeholder: Some("Enter name".into()), href: None,
+        value: Some("existing_value".into()), options: None,
+        pattern: None, minlength: None, maxlength: None, min: None, max: None, readonly: false,
+    }];
+    let semantics = classify(&elements);
+    let form = semantics.forms.iter().find(|f| f.id == "f").unwrap();
+    assert_eq!(form.inputs[0].name, Some("username".into()));
+    assert_eq!(form.inputs[0].value, Some("existing_value".into()));
+}
+
+// ============================================================================
+// Phase 13: Constraint-Aware Value Generation
+// ============================================================================
+
+#[test]
+fn constrained_value_truncates_to_maxlength() {
+    let val = constrained_value("Email", None, None, Some(5), None);
+    assert_eq!(val.len(), 5);
+    assert_eq!(val, "user@");
+}
+
+#[test]
+fn constrained_value_pads_to_minlength() {
+    let val = constrained_value("Age", Some("number"), None, None, Some(10));
+    assert!(val.len() >= 10);
+}
+
+#[test]
+fn constrained_value_no_constraints_passes_through() {
+    let val = constrained_value("Email", None, None, None, None);
+    assert_eq!(val, guess_value("Email", None, None));
+}
+
+#[test]
+fn constrained_value_respects_both() {
+    let val = constrained_value("Name", None, None, Some(8), Some(4));
+    assert!(val.len() >= 4);
+    assert!(val.len() <= 8);
+}
+
+// ============================================================================
+// Phase 13: Infer Page Category
+// ============================================================================
+
+#[test]
+fn infer_page_category_from_title() {
+    let screen = ScreenState {
+        url: None, title: "Login - App".into(),
+        forms: vec![], standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    assert_eq!(infer_page_category(&screen), PageCategory::Login);
+
+    let screen2 = ScreenState {
+        url: None, title: "Search Products".into(),
+        forms: vec![], standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    assert_eq!(infer_page_category(&screen2), PageCategory::Search);
+
+    let screen3 = ScreenState {
+        url: None, title: "My Dashboard".into(),
+        forms: vec![], standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+    };
+    assert_eq!(infer_page_category(&screen3), PageCategory::Dashboard);
 }

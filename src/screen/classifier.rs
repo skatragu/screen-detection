@@ -80,6 +80,11 @@ fn detect_primary_action(actions: &[ScreenElement]) -> Option<ScreenElement> {
 }
 
 fn is_input(el: &DomElement) -> bool {
+    // Skip disabled inputs — agent can't interact with them
+    if el.disabled {
+        return false;
+    }
+
     if el.tag != "input" && el.tag != "textarea" && el.tag != "select" {
         return false;
     }
@@ -166,6 +171,11 @@ fn to_input(el: &DomElement) -> ScreenElement {
         id: el.id.clone(),
         href: None,
         options: el.options.clone(),
+        name: el.name.clone(),
+        value: el.value.clone(),
+        maxlength: el.maxlength,
+        minlength: el.minlength,
+        readonly: el.readonly,
     }
 }
 
@@ -181,6 +191,11 @@ fn to_action(el: &DomElement) -> ScreenElement {
         id: el.id.clone(),
         href: el.href.clone(),
         options: None,
+        name: None,
+        value: None,
+        maxlength: None,
+        minlength: None,
+        readonly: false,
     }
 }
 
@@ -196,5 +211,10 @@ fn to_output(el: &DomElement) -> ScreenElement {
         id: el.id.clone(),
         href: None,
         options: None,
+        name: None,
+        value: None,
+        maxlength: None,
+        minlength: None,
+        readonly: false,
     }
 }

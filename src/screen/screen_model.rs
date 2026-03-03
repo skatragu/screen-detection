@@ -31,6 +31,18 @@ pub struct DomElement {
     pub value: Option<String>,
     #[serde(default)]
     pub options: Option<Vec<SelectOption>>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub minlength: Option<u32>,
+    #[serde(default)]
+    pub maxlength: Option<u32>,
+    #[serde(default)]
+    pub min: Option<String>,
+    #[serde(default)]
+    pub max: Option<String>,
+    #[serde(default)]
+    pub readonly: bool,
 }
 
 #[derive(Debug)]
@@ -53,6 +65,11 @@ pub struct ScreenElement {
     pub id: Option<String>,
     pub href: Option<String>,
     pub options: Option<Vec<SelectOption>>,
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub maxlength: Option<u32>,
+    pub minlength: Option<u32>,
+    pub readonly: bool,
 }
 
 #[derive(Debug, Clone)]

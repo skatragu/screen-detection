@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use crate::agent::ai_model::{MockTextInference, TextInference, guess_value};
+use crate::agent::ai_model::{MockTextInference, TextInference, constrained_value, guess_value};
 use crate::agent::error::AgentError;
 use crate::agent::page_model::{
-    FieldModel, FieldType, FormModel, NavigationTarget, OutputModel, PageCategory, PageModel,
-    SuggestedAssertion,
+    FieldModel, FieldType, FormModel, NavigationTarget, OutputModel, OutputSemantic, PageCategory,
+    PageModel, SuggestedAssertion,
 };
+use crate::screen::screen_model::SelectOption;
 use crate::state::state_model::ScreenState;
 
 // ============================================================================
@@ -84,6 +85,95 @@ pub fn classify_field_type(input_type: Option<&str>, label: Option<&str>, tag: O
     }
 
     FieldType::Text
+}
+
+// ============================================================================
+// Smart dropdown option selection
+// ============================================================================
+
+/// Select the best option from a dropdown, skipping common placeholder values.
+///
+/// Placeholder patterns: empty value, text starting with "select"/"choose"/"--"/"please",
+/// or text that is "none" or "n/a". Falls back to first option if all options look
+/// like placeholders.
+pub fn smart_select_option(options: &[SelectOption]) -> Option<&SelectOption> {
+    let is_placeholder = |opt: &SelectOption| -> bool {
+        let text_lower = opt.text.trim().to_lowercase();
+        let value = opt.value.trim();
+
+        value.is_empty()
+            || text_lower.is_empty()
+            || text_lower.starts_with("select")
+            || text_lower.starts_with("choose")
+            || text_lower.starts_with("--")
+            || text_lower.starts_with("please")
+            || text_lower == "none"
+            || text_lower == "n/a"
+    };
+
+    // Try to find a non-placeholder option
+    options
+        .iter()
+        .find(|opt| !is_placeholder(opt))
+        .or_else(|| options.first()) // fallback to first if all are placeholders
+}
+
+// ============================================================================
+// Output semantic classification
+// ============================================================================
+
+/// Classify the semantic meaning of an output element from its text content.
+pub fn classify_output_semantic(text: &str) -> OutputSemantic {
+    let lower = text.to_lowercase();
+
+    // Error patterns (check first — most specific)
+    if lower.contains("error")
+        || lower.contains("invalid")
+        || lower.contains("failed")
+        || lower.contains("not found")
+        || lower.contains("denied")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("incorrect")
+        || lower.contains("expired")
+        || lower.contains("required")
+    {
+        return OutputSemantic::Error;
+    }
+
+    // Success patterns
+    if lower.contains("success")
+        || lower.contains("welcome")
+        || lower.contains("created")
+        || lower.contains("saved")
+        || lower.contains("updated")
+        || lower.contains("confirmed")
+        || lower.contains("thank you")
+        || lower.contains("logged in")
+        || lower.contains("completed")
+    {
+        return OutputSemantic::Success;
+    }
+
+    // Warning patterns
+    if lower.contains("warning")
+        || lower.contains("caution")
+        || lower.contains("expires")
+        || lower.contains("limited")
+    {
+        return OutputSemantic::Warning;
+    }
+
+    // Navigation patterns
+    if (lower.contains("home") && lower.len() < 20)
+        || (lower.contains("next") && lower.len() < 20)
+        || (lower.contains("previous") && lower.len() < 20)
+        || (lower.contains("page ") && lower.contains(" of "))
+    {
+        return OutputSemantic::Navigation;
+    }
+
+    OutputSemantic::Info
 }
 
 // ============================================================================
@@ -188,19 +278,20 @@ impl PageAnalyzer for MockPageAnalyzer {
                 let fields = form
                     .inputs
                     .iter()
+                    .filter(|input| !input.readonly)
                     .map(|input| {
                         let label = input.label.clone().unwrap_or_default();
                         let field_type =
                             classify_field_type(input.input_type.as_deref(), Some(&label), input.tag.as_deref());
 
-                        // For selects with options, use first option value; otherwise guess_value
+                        // For selects with options, use smart selection; otherwise constrained_value
                         let suggested_test_value = if field_type == FieldType::Select {
                             input.options.as_ref()
-                                .and_then(|opts| opts.first())
+                                .and_then(|opts| smart_select_option(opts))
                                 .map(|o| o.value.clone())
                                 .unwrap_or_else(|| guess_value(&label, input.input_type.as_deref(), Some(&category)))
                         } else {
-                            guess_value(&label, input.input_type.as_deref(), Some(&category))
+                            constrained_value(&label, input.input_type.as_deref(), Some(&category), input.maxlength, input.minlength)
                         };
 
                         FieldModel {
@@ -227,7 +318,7 @@ impl PageAnalyzer for MockPageAnalyzer {
             })
             .collect();
 
-        // Build OutputModels
+        // Build OutputModels with semantic classification
         let outputs = screen
             .outputs
             .iter()
@@ -235,6 +326,7 @@ impl PageAnalyzer for MockPageAnalyzer {
                 o.label.as_ref().map(|label| OutputModel {
                     description: label.clone(),
                     region: "main".to_string(),
+                    semantic: classify_output_semantic(label),
                 })
             })
             .collect();

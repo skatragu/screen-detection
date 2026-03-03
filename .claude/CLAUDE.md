@@ -38,8 +38,15 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Multi-layer gating**: Agent actions must pass confidence threshold (0.65), loop suppression (max 2 repeats), budget checks (5 think / 3 retry / 2 loop), and terminal-success gates before execution. Loop budget resets to 5 on signal detection.
 - **Pluggable inference**: `ModelBackend` trait with `OllamaBackend` (qwen2.5:1.5b at localhost:11434), `MockBackend` (deterministic, for tests), plus `DeterministicPolicy` (rule-based with `guess_value()` heuristics) and `HybridPolicy` (combines deterministic + model). Agent uses `Box<dyn Policy>` and can be constructed with `Agent::with_deterministic()`, `Agent::with_hybrid()`, `Agent::with_mock()`, `Agent::with_policy()`.
 - **AI page understanding (hybrid enrichment)**: `PageAnalyzer` trait with `MockPageAnalyzer` (rule-based) and `LlmPageAnalyzer` (LLM-backed via `TextInference` trait). `LlmPageAnalyzer` uses a simplified prompt (~120 words) asking for only `purpose` and `category`, then builds the full `PageModel` deterministically via `MockPageAnalyzer`. LLM output is parsed via `try_parse_llm_response()` with 4-stage JSON recovery (direct parse → strip markdown fences → fix trailing commas → extract JSON substring). Category strings are normalized via `map_llm_category()` (case-insensitive with aliases). Never fails — always produces a valid `PageModel`.
-- **Richer DOM extraction**: `DomElement` has 6 additional optional fields (id, name, placeholder, href, value, options); `ScreenElement` has 5 additional fields (required, placeholder, id, href, options). `SelectOption { value, text }` type for `<select>` dropdown options. `label_for()` uses placeholder as fallback after aria_label and text.
+- **Richer DOM extraction**: `DomElement` has 6 additional optional fields (id, name, placeholder, href, value, options) plus 6 constraint fields (pattern, minlength, maxlength, min, max, readonly); `ScreenElement` has 5 additional fields (required, placeholder, id, href, options) plus 5 constraint fields (name, value, maxlength, minlength, readonly). All new fields use `#[serde(default)]` for backward compatibility. `SelectOption { value, text }` type for `<select>` dropdown options. `label_for()` uses placeholder as fallback after aria_label and text.
+- **Disabled/readonly filtering**: `is_input()` in `classifier.rs` rejects disabled elements upfront (`if el.disabled { return false; }`). `MockPageAnalyzer::analyze()` filters readonly inputs (`.filter(|input| !input.readonly)`) before building FieldModels — readonly fields carry data but shouldn't be filled.
 - **Field type classification**: `classify_field_type(input_type, label, tag)` maps HTML input types, label keywords, and tag names to semantic `FieldType` (15 variants: Text, Email, Password, Number, Date, Tel, Url, Select, Checkbox, Radio, Textarea, Search, Hidden, Time, Other). Tag parameter enables `<textarea>` and `<select>` detection. Used by `MockPageAnalyzer` to enrich form analysis.
+- **Constraint-aware value generation**: `constrained_value(label, input_type, category, maxlength, minlength)` wraps `guess_value()` and enforces HTML constraints: truncates to `maxlength`, pads with `'x'` to `minlength`. `MockPageAnalyzer` uses it when filling form fields, ensuring generated values are always valid for the field's declared constraints.
+- **Smart dropdown selection**: `smart_select_option(options)` skips placeholder-like entries (empty value, text starting with "select"/"choose"/"--"/"please", text "none"/"n/a") and returns the first real option. Falls back to `options.first()` if all are placeholders. Replaces blind first-option selection in `MockPageAnalyzer`.
+- **Output semantic classification**: `classify_output_semantic(text)` assigns `OutputSemantic` (Error, Success, Warning, Navigation, Info) to page output text via keyword matching. `OutputModel` gains a `semantic` field (`#[serde(default)]` → `Info`) so consumers can distinguish errors from success messages without re-parsing text.
+- **Field-type-aware SelectorHint**: `build_selector_for_field(field, form_id)` maps `FieldType` to the correct ARIA role + HTML tag + input_type for Playwright element targeting (e.g., Select → role="combobox"/tag="select", Textarea → role="textbox"/tag="textarea", Number → role="spinbutton"). `submit_form_in_session()` uses it instead of hardcoding role="textbox" for all inputs. Hidden fields are skipped; Radio uses `session.check()`.
+- **Smart form ranking**: `rank_form(form)` scores forms by input count (up to 0.5), primary action presence (0.3), and intent confidence (up to 0.3). Returns 0.0 for empty forms. `select_best_form(forms)` picks the highest-ranked non-empty form. `DeterministicPolicy::decide()` uses it instead of blind `forms.first()`, ensuring multi-form pages target the main interactive form.
+- **Category-aware filling**: `infer_page_category(screen)` in `ai_model.rs` derives `PageCategory` from form intents + title keywords (avoids circular import with `page_analyzer.rs`). `DeterministicPolicy::decide()` passes `Some(&category)` to `guess_value()`, so Login pages get existing-user credentials, Registration pages get new-user values, etc.
 - **Smart form filling**: `guess_value(label, input_type, category)` derives sensible values from ~26 label patterns (email, password, name, address, phone, card number, CVV, city, state, country, company, birthday, etc.) with input_type fallbacks (search, time, month, week, color, range, checkbox, radio) and final fallback `"test"`. When `PageCategory` is provided, returns context-aware values: Login → existing user credentials, Registration → new user values, Search → meaningful queries, Checkout → billing data, Settings → update values. `DeterministicPolicy` uses `FillAndSubmitForm` to fill all inputs + submit in one agent step.
 - **Enhanced browser interaction**: `select_option`, `check`, `uncheck` commands in the NDJSON browser protocol enable dropdown selection, checkbox toggling, and radio button interaction. `submit_form_in_session()` dispatches to the appropriate interaction method based on `FieldType` (Select → select_option, Checkbox → check, others → fill).
 - **Agent state machine**: Deterministic progression Observe -> Evaluate -> Think -> Act -> (back to Observe or Stop).
@@ -70,9 +77,9 @@ Raw DOM (JSON from Playwright/Node.js)
 
 ```bash
 cargo build
-cargo test                       # 222 offline tests (fast, no browser needed)
+cargo test                       # 267 offline tests (fast, no browser needed)
 cargo test -- --ignored          # 28 integration tests (requires Node.js + Playwright; 5 LLM tests need Ollama)
-cargo test -- --include-ignored  # all 250 tests
+cargo test -- --include-ignored  # all 295 tests
 ```
 
 - Rust edition 2024
@@ -80,17 +87,17 @@ cargo test -- --include-ignored  # all 250 tests
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 250 tests total: 222 offline + 28 integration (real browser via `#[ignore]`)
-- 222 offline tests split across module-based test files:
-  - `tests/agent_tests.rs` (44) — agent behavior, policy logic, guess_value heuristics (generic + intent-based), budget gating, error handling
-  - `tests/browser_tests.rs` (29) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol, select/check/uncheck serialization, DomElement/SelectOption serde
+- 295 tests total: 267 offline + 28 integration (real browser via `#[ignore]`)
+- 267 offline tests split across module-based test files:
+  - `tests/agent_tests.rs` (59) — agent behavior, policy logic, guess_value heuristics (generic + intent-based), budget gating, error handling, form ranking, constraint-aware values, page category inference, disabled input filtering
+  - `tests/browser_tests.rs` (32) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol, select/check/uncheck serialization, DomElement/SelectOption serde, DOM constraint fields
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
-  - `tests/explorer_tests.rs` (30) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url
-  - `tests/page_model_tests.rs` (41) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer (required, select options, login values), LlmPageAnalyzer hybrid enrichment + field_values override, JSON recovery (try_parse), category mapping, prompt construction, field classification (input types, tags, labels), navigation targets
+  - `tests/explorer_tests.rs` (38) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url, field-type SelectorHint builder
+  - `tests/page_model_tests.rs` (58) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer (required, select options, login values, readonly filtering, output semantics), LlmPageAnalyzer hybrid enrichment + field_values override, JSON recovery (try_parse), category mapping, prompt construction, field classification (input types, tags, labels), navigation targets, smart dropdown selection, output semantic classification
   - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   - `tests/runner_tests.rs` (18) — RunnerConfig defaults/serde, TestResult new fields (duration_ms, screenshots, retry_attempts) serde + backward compat, console/HTML/JUnit output with timing/retry/screenshot, screenshot embedding
   - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
-  - `tests/state_tests.rs` (3) — normalize edge cases, form intent scoring
+  - `tests/state_tests.rs` (5) — normalize edge cases, form intent scoring, ScreenElement constraint fields
   - `tests/cli_tests.rs` (15) — CLI argument parsing (explore/run/generate subcommands), config file loading/defaults/YAML roundtrip, ExplorerConfig builder, sanitize_filename, load_specs
 - 28 integration tests (real browser, `#[ignore]`):
   - `tests/integration_tests.rs` (28) — session lifecycle, DOM pipeline, queries, form interaction, TestRunner, navigation, canonical pipeline, form-aware exploration, flow detection, LLM page analysis (5 tests, requires Ollama)
@@ -130,6 +137,7 @@ cargo test -- --include-ignored  # all 250 tests
 - `TestContext`: current_step, assertion_results — execution state tracker with pass/fail counting
 - `TestRunner`: stateless executor — takes TestSpec + BrowserSession, returns TestResult; `run()` uses defaults; `run_with_config()` adds retry/screenshot/timing
 - `RunnerConfig`: max_assertion_retries (2), retry_delay_ms (500), screenshot_on_failure (true), screenshot_dir ("screenshots") — controls test runner resilience; separate from TestSpec (runner-level not spec-level concerns)
+- `OutputSemantic`: Success, Error, Warning, Info, Data, Navigation — semantic classification of page output text; `OutputModel.semantic` defaults to `Info` via `#[serde(default)]`
 - `PageModel`: purpose, category (PageCategory), forms (Vec<FormModel>), outputs, suggested_assertions, navigation_targets — AI understanding of a web page
 - `PageCategory`: Login, Registration, Search, Dashboard, Settings, Listing, Detail, Checkout, Error, Other — page classification enum
 - `FormModel`: form_id, purpose, fields (Vec<FieldModel>), submit_label — AI understanding of a form
@@ -184,11 +192,11 @@ src/
     mod.rs            -- Module exports
     agent.rs          -- State machine, gating, execute_action(), execute_action_session(), emit_observed_actions()
     agent_model.rs    -- AgentState, AgentAction (incl. FillAndSubmitForm, NavigateTo), AgentMemory, ModelDecision, Policy trait
-    ai_model.rs       -- OllamaBackend (env-var config, temperature/top_p/top_k), MockBackend, DeterministicPolicy, HybridPolicy, guess_value(label, input_type, category) with ~26 patterns + PageCategory-aware filling, prompt construction, TextInference trait, MockTextInference
+    ai_model.rs       -- OllamaBackend (env-var config, temperature/top_p/top_k), MockBackend, DeterministicPolicy, HybridPolicy, guess_value(label, input_type, category) with ~26 patterns + PageCategory-aware filling, constrained_value() (maxlength/minlength enforcement), rank_form(), select_best_form(), infer_page_category(), prompt construction, TextInference trait, MockTextInference
     budget.rs         -- Budget check (think/retry/loop)
     error.rs          -- AgentError enum (10 variants), Display, std::error::Error impls
-    page_model.rs     -- PageModel, PageCategory, FormModel, FieldModel, FieldType, OutputModel, SuggestedAssertion, NavigationTarget
-    page_analyzer.rs  -- PageAnalyzer trait, MockPageAnalyzer (rule-based), LlmPageAnalyzer (hybrid enrichment: LLM purpose+category + deterministic details), LlmPageResponse, try_parse_llm_response() (4-stage JSON recovery), map_llm_category(), classify_field_type()
+    page_model.rs     -- PageModel, PageCategory, FormModel, FieldModel, FieldType, OutputModel (with OutputSemantic), OutputSemantic, SuggestedAssertion, NavigationTarget
+    page_analyzer.rs  -- PageAnalyzer trait, MockPageAnalyzer (rule-based, with readonly filter + constrained_value + smart_select_option + classify_output_semantic), LlmPageAnalyzer (hybrid enrichment: LLM purpose+category + deterministic details), LlmPageResponse, try_parse_llm_response() (4-stage JSON recovery), map_llm_category(), classify_field_type(), smart_select_option(), classify_output_semantic()
   browser/
     mod.rs            -- Module exports
     playwright.rs     -- DOM extraction (returns Result), SelectorHint, BrowserCommand, BrowserResult, execute_browser_action()
@@ -201,7 +209,7 @@ src/
     mod.rs            -- Module exports
     classifier.rs     -- classify() DOM -> ScreenSemantics
     intent.rs         -- infer_form_intent() heuristic scoring
-    screen_model.rs   -- DomElement (with id, name, placeholder, href, value, options), SelectOption, Form, ScreenElement (with required, placeholder, id, href, options), FormIntent, ElementKind
+    screen_model.rs   -- DomElement (with id, name, placeholder, href, value, options, pattern, minlength, maxlength, min, max, readonly), SelectOption, Form, ScreenElement (with required, placeholder, id, href, options, name, value, maxlength, minlength, readonly), FormIntent, ElementKind
   state/
     mod.rs            -- Module exports
     state_builder.rs  -- build_state(), resolve_identities()
@@ -212,7 +220,7 @@ src/
   explorer/
     mod.rs            -- Module exports
     app_map.rs        -- ExplorerConfig, PageNode, TransitionKind, Transition, FlowStep, Flow, AppMap (page graph data model)
-    explorer.rs       -- explore() (offline single-page), explore_live() (form-aware BFS via BrowserSession), submit_form_in_session(), is_same_origin(), resolve_url()
+    explorer.rs       -- explore() (offline single-page), explore_live() (form-aware BFS via BrowserSession), submit_form_in_session() (field-type-aware, skips Hidden, handles Radio), build_selector_for_field() (FieldType → SelectorHint), is_same_origin(), resolve_url()
     flow_detector.rs  -- detect_flows() (walks FormSubmission chains), build_flow_step(), name_flow()
     test_generator.rs -- generate_test_plan(), generate_smoke_test(), generate_form_test(), generate_flow_tests(), map_suggested_assertion()
   spec/
@@ -236,14 +244,14 @@ src/
     trace.rs          -- TraceEvent builder
     logger.rs         -- JSONL file logger (Mutex<File>), gracefully degrades if file unavailable
 tests/
-  agent_tests.rs      -- 44 tests: agent behavior, policy, guess_value (generic + intent-based), budget, errors
-  browser_tests.rs    -- 29 tests: BrowserRequest/Response serde, session errors, query protocol, select/check/uncheck, DomElement/SelectOption
+  agent_tests.rs      -- 59 tests: agent behavior, policy, guess_value (generic + intent-based), budget, errors, form ranking (rank_form/select_best_form), constrained_value, infer_page_category, disabled input filtering
+  browser_tests.rs    -- 32 tests: BrowserRequest/Response serde, session errors, query protocol, select/check/uncheck, DomElement/SelectOption, DOM constraint field deserialization
   canonical_tests.rs  -- 12 tests: classification, diffing, signals
-  explorer_tests.rs   -- 30 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow), URL utilities
-  page_model_tests.rs -- 41 tests: PageModel serde, MockPageAnalyzer (required, select options, login values), LlmPageAnalyzer hybrid enrichment + field_values, JSON recovery, category mapping, prompt construction, field classification (types, tags, labels)
+  explorer_tests.rs   -- 38 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow), URL utilities, build_selector_for_field (FieldType → SelectorHint)
+  page_model_tests.rs -- 58 tests: PageModel serde, MockPageAnalyzer (required, select options, login values, readonly filtering, output semantics), LlmPageAnalyzer hybrid enrichment + field_values, JSON recovery, category mapping, prompt construction, field classification (types, tags, labels), smart_select_option, classify_output_semantic, output_semantic serde
   report_tests.rs     -- 15 tests: TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
   spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
-  state_tests.rs      -- 3 tests: normalize, form intent scoring
+  state_tests.rs      -- 5 tests: normalize, form intent scoring, ScreenElement constraint fields (maxlength/minlength)
   cli_tests.rs        -- 15 tests: CLI arg parsing (explore/run/generate), config loading/defaults/YAML, builder, sanitize_filename, load_specs
   integration_tests.rs -- 28 tests (real browser, #[ignore]): session, DOM, queries, forms, runner, nav, canonical, form-aware exploration, flow detection, LLM page analysis
   common/

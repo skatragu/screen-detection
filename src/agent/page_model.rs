@@ -57,11 +57,28 @@ pub struct FormModel {
     pub submit_label: Option<String>,
 }
 
+/// Semantic classification of an output element's meaning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputSemantic {
+    Success,
+    Error,
+    Warning,
+    Info,
+    Data,
+    Navigation,
+}
+
+fn default_output_semantic() -> OutputSemantic {
+    OutputSemantic::Info
+}
+
 /// Description of an output region on the page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputModel {
     pub description: String,
     pub region: String,
+    #[serde(default = "default_output_semantic")]
+    pub semantic: OutputSemantic,
 }
 
 /// An assertion the AI suggests for testing this page.
