@@ -37,6 +37,21 @@ fn classifier_populates_screen_element_fields() {
             min: None,
             max: None,
             readonly: false,
+            heading_level: None,
+            autocomplete: None,
+            inputmode: None,
+            title_attr: None,
+            form_action: None,
+            form_method: None,
+            aria_describedby_text: None,
+            aria_invalid: false,
+            aria_required: false,
+            associated_label_text: None,
+            fieldset_legend: None,
+            section_heading: None,
+            nearby_help_text: None,
+            semantic_section: None,
+            visible: false,
         },
         DomElement {
             tag: "button".into(),
@@ -59,6 +74,21 @@ fn classifier_populates_screen_element_fields() {
             min: None,
             max: None,
             readonly: false,
+            heading_level: None,
+            autocomplete: None,
+            inputmode: None,
+            title_attr: None,
+            form_action: None,
+            form_method: None,
+            aria_describedby_text: None,
+            aria_invalid: false,
+            aria_required: false,
+            associated_label_text: None,
+            fieldset_legend: None,
+            section_heading: None,
+            nearby_help_text: None,
+            semantic_section: None,
+            visible: false,
         },
         DomElement {
             tag: "div".into(),
@@ -81,6 +111,21 @@ fn classifier_populates_screen_element_fields() {
             min: None,
             max: None,
             readonly: false,
+            heading_level: None,
+            autocomplete: None,
+            inputmode: None,
+            title_attr: None,
+            form_action: None,
+            form_method: None,
+            aria_describedby_text: None,
+            aria_invalid: false,
+            aria_required: false,
+            associated_label_text: None,
+            fieldset_legend: None,
+            section_heading: None,
+            nearby_help_text: None,
+            semantic_section: None,
+            visible: false,
         },
     ];
 
@@ -520,4 +565,76 @@ fn dom_element_readonly_defaults_false() {
     let json = r#"{"tag": "input", "disabled": false, "required": false}"#;
     let el: DomElement = serde_json::from_str(json).unwrap();
     assert!(!el.readonly);
+}
+
+// ============================================================================
+// Phase 15 Step 1: Rich DOM field tests
+// ============================================================================
+
+#[test]
+fn dom_element_rich_fields_serde_defaults() {
+    // Rich fields should default to None/false when absent (backward compat)
+    let json = r#"{"tag":"input","disabled":false,"required":false}"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.associated_label_text, None);
+    assert_eq!(el.fieldset_legend, None);
+    assert_eq!(el.nearby_help_text, None);
+    assert_eq!(el.autocomplete, None);
+    assert_eq!(el.aria_describedby_text, None);
+    assert!(!el.aria_invalid);
+    assert!(!el.aria_required);
+    assert_eq!(el.heading_level, None);
+}
+
+#[test]
+fn dom_element_heading_level_serde() {
+    let json = r#"{"tag":"h1","disabled":false,"required":false,"heading_level":1}"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.heading_level, Some(1));
+}
+
+#[test]
+fn dom_element_fieldset_legend_serde() {
+    let json = r#"{"tag":"input","disabled":false,"required":false,"fieldset_legend":"Payment Info"}"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.fieldset_legend, Some("Payment Info".to_string()));
+}
+
+#[test]
+fn dom_element_aria_describedby_text_serde() {
+    let json = r#"{"tag":"input","disabled":false,"required":false,"aria_describedby_text":"Must be at least 8 characters"}"#;
+    let el: DomElement = serde_json::from_str(json).unwrap();
+    assert_eq!(el.aria_describedby_text, Some("Must be at least 8 characters".to_string()));
+}
+
+#[test]
+fn structural_outline_serde_roundtrip() {
+    use screen_detection::screen::screen_model::{HeadingEntry, LandmarkEntry, StructuralOutline};
+    let outline = StructuralOutline {
+        headings: vec![HeadingEntry { level: 1, text: "Login".to_string() }],
+        landmarks: vec![LandmarkEntry { tag: "main".to_string(), label: "".to_string() }],
+    };
+    let json = serde_json::to_string(&outline).unwrap();
+    let parsed: StructuralOutline = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.headings.len(), 1);
+    assert_eq!(parsed.headings[0].text, "Login");
+    assert_eq!(parsed.landmarks.len(), 1);
+    assert_eq!(parsed.landmarks[0].tag, "main");
+}
+
+#[test]
+fn structural_outline_defaults_to_empty() {
+    use screen_detection::screen::screen_model::StructuralOutline;
+    let outline: StructuralOutline = serde_json::from_str("{}").unwrap();
+    assert!(outline.headings.is_empty());
+    assert!(outline.landmarks.is_empty());
+}
+
+#[test]
+fn screen_state_structural_outline_backward_compat() {
+    // ScreenState with structural_outline defaults to empty
+    use screen_detection::screen::screen_model::StructuralOutline;
+    let outline = StructuralOutline::default();
+    assert!(outline.headings.is_empty());
+    assert!(outline.landmarks.is_empty());
 }

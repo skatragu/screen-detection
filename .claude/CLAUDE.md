@@ -56,8 +56,13 @@ Raw DOM (JSON from Playwright/Node.js)
 - **Autonomous exploration**: `ExplorerConfig` controls BFS crawling (max_pages, max_depth, same_origin_only, explore_forms, max_forms_per_page). `explore()` for offline single-page analysis, `explore_live()` for multi-page BFS via `BrowserSession`. Builds `AppMap` graph of `PageNode`s + `Transition`s. Form-aware: fills/submits forms during crawling to discover post-submit pages (dashboards, search results).
 - **Transition tracking**: `TransitionKind` enum (`Link` | `FormSubmission { form_id, values }`) tracks how each page transition was triggered. Defaults to `Link` for backward compatibility via `#[serde(default)]`.
 - **Flow detection**: `detect_flows(app_map)` walks `FormSubmission` transition chains to discover multi-step user flows. Starts from "origin" pages (not targets of other form submissions). Names flows from `PageCategory` (e.g., "Flow: Login -> Dashboard").
-- **Test generation**: `generate_test_plan(app_map)` produces `Vec<TestSpec>` from explored pages. Per page: smoke test (wait + assert suggested_assertions) + per-form test (fill_and_submit with AI-suggested values). Plus flow tests from `detect_flows()`. `map_suggested_assertion()` bridges `SuggestedAssertion` → `AssertionSpec`.
+- **Test generation**: `generate_test_plan(app_map, value_overrides)` produces `Vec<TestSpec>` from explored pages. Per page: smoke test (wait + assert suggested_assertions + URL path assertion) + per-form test (fill_and_submit with AI-suggested or user-overridden values + post-submit assertions from `ExpectedOutcome`). Plus flow tests from `detect_flows()`. `map_suggested_assertion()` bridges `SuggestedAssertion` → `AssertionSpec`.
 - **Resilient test runner**: `TestRunner::run_with_config(spec, session, config)` adds assertion retry (configurable max retries + delay), screenshot on failure (base64-embedded in HTML reports), and per-test duration tracking. `RunnerConfig` controls retry/screenshot settings. `run()` delegates to `run_with_config()` with defaults for backward compatibility.
+- **Expected outcomes**: `ExpectedOutcome` struct captures post-action verification signals: `url_contains`, `url_not_contains`, `success_text`, `error_indicators`. Attached to both `FormModel` and `PageModel`. `infer_form_outcome(category)` derives rule-based defaults per `PageCategory` (Login → url_not_contains /login + error indicators; Search → success_text "results"; etc.). `LlmPageAnalyzer` merges LLM-provided indicators with dedup check.
+- **Authentication support**: `AuthConfig` (login_url, credentials HashMap, submit_label, success_url_contains) drives `perform_login()` in `explorer.rs`. Auto-login runs before BFS exploration if credentials are configured. `explore_live()` accepts `Option<&AuthConfig>`.
+- **Configuration system**: `AuthConfig`, `ValueConfig`, `ExclusionConfig` added to `AppConfig` with `#[serde(default)]`. `ValueConfig.resolve(label, category)` does case-insensitive label lookup with category-scoped override priority. `ExclusionConfig.should_skip(url)` matches URL substrings; `include_urls` seeds forced pages into BFS queue.
+- **Value overrides**: `explore_live()` accepts `Option<&ValueConfig>`; form field values use `value_overrides.resolve()` with fallback to `suggested_test_value`. `generate_test_plan()` accepts `Option<&ValueConfig>` and applies overrides during test spec generation.
+- **URL resolution**: `resolve_url(base, candidate)` handles absolute URLs, protocol-relative (`//cdn.example.com`), root-relative (`/path`), and relative paths. Filters `javascript:`, `mailto:`, `tel:`, empty strings, bare `#`. `extract_origin(url)` returns `Option<String>` (scheme + host). `NavigationTarget.href` carries the actual link href for resolution (was previously dropped).
 
 ## Constants
 
@@ -77,9 +82,9 @@ Raw DOM (JSON from Playwright/Node.js)
 
 ```bash
 cargo build
-cargo test                       # 267 offline tests (fast, no browser needed)
+cargo test                       # 336 offline tests (fast, no browser needed)
 cargo test -- --ignored          # 28 integration tests (requires Node.js + Playwright; 5 LLM tests need Ollama)
-cargo test -- --include-ignored  # all 295 tests
+cargo test -- --include-ignored  # all 364 tests
 ```
 
 - Rust edition 2024
@@ -87,18 +92,18 @@ cargo test -- --include-ignored  # all 295 tests
 - Tests use HTML fixtures in `tests/fixtures/` (01-10) loaded via `file://` URLs
 - Test helpers in `tests/common/` provide `diff_between_pages()`, `diff_static()`, etc.
 - `MockBackend` enables deterministic agent tests without Ollama running
-- 295 tests total: 267 offline + 28 integration (real browser via `#[ignore]`)
-- 267 offline tests split across module-based test files:
+- 364 tests total: 336 offline + 28 integration (real browser via `#[ignore]`)
+- 336 offline tests split across module-based test files:
   - `tests/agent_tests.rs` (59) — agent behavior, policy logic, guess_value heuristics (generic + intent-based), budget gating, error handling, form ranking, constraint-aware values, page category inference, disabled input filtering
   - `tests/browser_tests.rs` (32) — BrowserRequest/BrowserResponse serialization, session error variants, NavigateTo action, query protocol, select/check/uncheck serialization, DomElement/SelectOption serde, DOM constraint fields
   - `tests/canonical_tests.rs` (12) — classification, diffing, signals
-  - `tests/explorer_tests.rs` (38) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow), flow detection, map_suggested_assertion, is_same_origin, resolve_url, field-type SelectorHint builder
-  - `tests/page_model_tests.rs` (58) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer (required, select options, login values, readonly filtering, output semantics), LlmPageAnalyzer hybrid enrichment + field_values override, JSON recovery (try_parse), category mapping, prompt construction, field classification (input types, tags, labels), navigation targets, smart dropdown selection, output semantic classification
+  - `tests/explorer_tests.rs` (69) — ExplorerConfig, AppMap data model, TransitionKind/FlowStep/Flow serde, explore() offline, test generation (smoke/form/flow + value overrides + exclusion filtering + expected outcome assertions), flow detection, map_suggested_assertion, is_same_origin, resolve_url (absolute/root-relative/relative/protocol-relative/filtered), extract_origin, field-type SelectorHint builder
+  - `tests/page_model_tests.rs` (78) — PageModel/PageCategory/FieldType serde roundtrips, MockPageAnalyzer (required, select options, login values, readonly filtering, output semantics, richer assertions), LlmPageAnalyzer hybrid enrichment + field_values override + success/error indicators, JSON recovery (try_parse), category mapping, prompt construction, field classification (input types, tags, labels), navigation targets (href serde + backward compat), smart dropdown selection, output semantic classification, ExpectedOutcome (default/serde/infer_form_outcome per category), LLM indicator merging + dedup
   - `tests/report_tests.rs` (15) — TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
-  - `tests/runner_tests.rs` (18) — RunnerConfig defaults/serde, TestResult new fields (duration_ms, screenshots, retry_attempts) serde + backward compat, console/HTML/JUnit output with timing/retry/screenshot, screenshot embedding
-  - `tests/spec_tests.rs` (15) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips
+  - `tests/runner_tests.rs` (19) — RunnerConfig defaults/serde, TestResult new fields (duration_ms, screenshots, retry_attempts) serde + backward compat, console/HTML/JUnit output with timing/retry/screenshot, screenshot embedding, UrlNotContains report output
+  - `tests/spec_tests.rs` (16) — TestSpec YAML/JSON roundtrips, TestContext tracking, TestResult serialization, assertion roundtrips, UrlNotContains YAML roundtrip
   - `tests/state_tests.rs` (5) — normalize edge cases, form intent scoring, ScreenElement constraint fields
-  - `tests/cli_tests.rs` (15) — CLI argument parsing (explore/run/generate subcommands), config file loading/defaults/YAML roundtrip, ExplorerConfig builder, sanitize_filename, load_specs
+  - `tests/cli_tests.rs` (31) — CLI argument parsing (explore/run/generate subcommands), config file loading/defaults/YAML roundtrip, ExplorerConfig builder, sanitize_filename, load_specs, AuthConfig/ValueConfig/ExclusionConfig serde + resolve logic + wiring
 - 28 integration tests (real browser, `#[ignore]`):
   - `tests/integration_tests.rs` (28) — session lifecycle, DOM pipeline, queries, form interaction, TestRunner, navigation, canonical pipeline, form-aware exploration, flow detection, LLM page analysis (5 tests, requires Ollama)
 
@@ -131,7 +136,7 @@ cargo test -- --include-ignored  # all 295 tests
 - `AgentError`: SubprocessSpawn, SubprocessFailed, JsonParse, JsonSerialize, BrowserAction, DomStructure, ElementNotFound, MissingState, SessionIO, SessionProtocol — typed error enum (10 variants); implements `Display` and `std::error::Error` with source chaining
 - `TestSpec`: name, start_url, steps (Vec<TestStep>) — complete test specification
 - `TestStep`: FillForm, FillAndSubmit, Click, Navigate, Wait, Assert — serde-tagged enum (`#[serde(tag = "action")]`)
-- `AssertionSpec`: UrlContains, UrlEquals, TitleContains, TextPresent, TextAbsent, ElementText, ElementVisible, ElementCount — serde-tagged enum (`#[serde(tag = "type")]`)
+- `AssertionSpec`: UrlContains, UrlEquals, UrlNotContains, TitleContains, TextPresent, TextAbsent, ElementText, ElementVisible, ElementCount — serde-tagged enum (`#[serde(tag = "type", rename_all = "snake_case")]`); `UrlNotContains { expected }` passes when current URL does NOT contain expected substring
 - `AssertionResult`: step_index, spec, passed, actual, message — single assertion outcome
 - `TestResult`: spec_name, passed, steps_run, assertion_results, error, duration_ms (Option<u128>), screenshots (Vec<String>), retry_attempts (usize) — complete test run result; new fields use `#[serde(default)]` for backward compat
 - `TestContext`: current_step, assertion_results — execution state tracker with pass/fail counting
@@ -146,7 +151,12 @@ cargo test -- --include-ignored  # all 295 tests
 - `PageAnalyzer` trait: `analyze(&self, screen: &ScreenState) -> Result<PageModel, AgentError>` — pluggable page analysis
 - `TextInference` trait: `infer_text(&self, prompt: &str) -> Option<String>` — generic text-in/text-out LLM interface
 - `MockTextInference`: canned response for deterministic testing of LlmPageAnalyzer
-- `LlmPageResponse`: purpose (Option), category (Option), field_values (Option<HashMap<String, String>>) — lightweight struct for parsing LLM output; used by `try_parse_llm_response()`; field_values enables LLM-suggested form values that override deterministic defaults
+- `LlmPageResponse`: purpose (Option), category (Option), field_values (Option<HashMap<String, String>>), success_indicators (Option<Vec<String>>), error_indicators (Option<Vec<String>>) — lightweight struct for parsing LLM output; used by `try_parse_llm_response()`; field_values enables LLM-suggested form values that override deterministic defaults; success/error indicators merge into `ExpectedOutcome` with dedup
+- `ExpectedOutcome`: url_contains, url_not_contains, success_text (Vec<String>), error_indicators (Vec<String>) — post-action verification signals; attached to `FormModel` and `PageModel` with `#[serde(default)]`; `infer_form_outcome(category)` derives rule-based defaults per PageCategory
+- `AuthConfig`: login_url (Option), credentials (HashMap<String, String>), submit_label (Option), success_url_contains (Option) — drives `perform_login()` before BFS; `has_credentials()` returns true when credentials non-empty
+- `ValueConfig`: fields (HashMap<String, String>), categories (HashMap<String, HashMap<String, String>>) — user field value overrides; `resolve(label, category)` does case-insensitive lookup with category-scoped priority over global fields
+- `ExclusionConfig`: skip_urls (Vec<String>), include_urls (Vec<String>) — `should_skip(url)` matches any substring in skip_urls; include_urls seeded into BFS queue before main loop
+- `AppConfig`: explore (ExploreConfig), run (RunConfig), ollama (OllamaConfig), auth (AuthConfig), values (ValueConfig), exclusions (ExclusionConfig) — optional YAML config file model; all fields `#[serde(default)]` for backward compat
 - `ExplorerConfig`: start_url, max_pages (10), max_depth (3), same_origin_only (true), explore_forms (true), max_forms_per_page (3) — controls autonomous BFS crawling with form-aware exploration
 - `PageNode`: url, title, depth, page_model (PageModel) — single discovered page in the AppMap
 - `TransitionKind`: Link | FormSubmission { form_id, values } — how a page transition was triggered; defaults to Link via serde
@@ -157,7 +167,7 @@ cargo test -- --include-ignored  # all 295 tests
 - `TestSuiteReport`: suite_name, total, passed, failed, duration_ms, test_results — aggregated report; from_results(), with_duration(), all_passed()
 - `Cli`: clap-derived CLI parser with global args (verbose, ollama_endpoint, ollama_model, config) and `Commands` subcommand enum
 - `Commands`: Explore { url, max_pages, max_depth, explore_forms, max_forms_per_page, analyzer } | Run { spec, format, output } | Generate { url, output_dir, ... } — CLI subcommands
-- `AppConfig`: explore (ExploreConfig), run (RunConfig), ollama (OllamaConfig) — optional YAML config file model with serde defaults
+- `NavigationTarget`: label, likely_destination, href (Option<String>) — `href` carries the actual link URL for resolution; propagated by `MockPageAnalyzer` from `ScreenElement.href`; used by `explore_live()` as `target.href.as_deref().unwrap_or(&target.label)`
 
 ## CLI Usage
 
@@ -176,8 +186,38 @@ cargo run -- run --spec test.yaml --format junit -o report.xml
 # With LLM analyzer
 cargo run -- explore --url https://example.com --analyzer llm --ollama-model llama3
 
-# With config file
+# With config file (including auth, values, exclusions)
 cargo run -- --config my-config.yaml explore --url https://example.com
+```
+
+### Example Config YAML (screen-detection.yaml)
+```yaml
+auth:
+  login_url: "https://myapp.com/login"
+  credentials:
+    Email: "admin@staging.com"
+    Password: "StagingPass2024!"
+  success_url_contains: "/dashboard"
+
+values:
+  fields:
+    Email: "tester@mycompany.com"
+    Phone: "555-0199"
+  categories:
+    Checkout:
+      Card Number: "4000056655665556"
+      CVV: "314"
+
+exclusions:
+  skip_urls:
+    - "/logout"
+    - "/admin"
+  include_urls:
+    - "https://myapp.com/settings"
+
+explore:
+  max_pages: 20
+  max_depth: 4
 ```
 
 Exit code: 0 if all tests pass, 1 if any fail (for CI integration).
@@ -195,8 +235,8 @@ src/
     ai_model.rs       -- OllamaBackend (env-var config, temperature/top_p/top_k), MockBackend, DeterministicPolicy, HybridPolicy, guess_value(label, input_type, category) with ~26 patterns + PageCategory-aware filling, constrained_value() (maxlength/minlength enforcement), rank_form(), select_best_form(), infer_page_category(), prompt construction, TextInference trait, MockTextInference
     budget.rs         -- Budget check (think/retry/loop)
     error.rs          -- AgentError enum (10 variants), Display, std::error::Error impls
-    page_model.rs     -- PageModel, PageCategory, FormModel, FieldModel, FieldType, OutputModel (with OutputSemantic), OutputSemantic, SuggestedAssertion, NavigationTarget
-    page_analyzer.rs  -- PageAnalyzer trait, MockPageAnalyzer (rule-based, with readonly filter + constrained_value + smart_select_option + classify_output_semantic), LlmPageAnalyzer (hybrid enrichment: LLM purpose+category + deterministic details), LlmPageResponse, try_parse_llm_response() (4-stage JSON recovery), map_llm_category(), classify_field_type(), smart_select_option(), classify_output_semantic()
+    page_model.rs     -- PageModel (with expected_outcome), PageCategory, FormModel (with expected_outcome), FieldModel, FieldType, ExpectedOutcome, OutputModel (with OutputSemantic), OutputSemantic, SuggestedAssertion, NavigationTarget (with href)
+    page_analyzer.rs  -- PageAnalyzer trait, MockPageAnalyzer (rule-based, with readonly filter + constrained_value + smart_select_option + classify_output_semantic + infer_form_outcome), LlmPageAnalyzer (hybrid enrichment: LLM purpose+category+success/error indicators + deterministic details), LlmPageResponse (with success_indicators/error_indicators), try_parse_llm_response() (4-stage JSON recovery), map_llm_category(), classify_field_type(), smart_select_option(), classify_output_semantic(), infer_form_outcome()
   browser/
     mod.rs            -- Module exports
     playwright.rs     -- DOM extraction (returns Result), SelectorHint, BrowserCommand, BrowserResult, execute_browser_action()
@@ -220,12 +260,12 @@ src/
   explorer/
     mod.rs            -- Module exports
     app_map.rs        -- ExplorerConfig, PageNode, TransitionKind, Transition, FlowStep, Flow, AppMap (page graph data model)
-    explorer.rs       -- explore() (offline single-page), explore_live() (form-aware BFS via BrowserSession), submit_form_in_session() (field-type-aware, skips Hidden, handles Radio), build_selector_for_field() (FieldType → SelectorHint), is_same_origin(), resolve_url()
+    explorer.rs       -- explore() (offline single-page), explore_live() (6-param: config, session, analyzer, auth?, exclusions?, value_overrides?), perform_login() (navigates to login URL, fills credentials, submits), submit_form_in_session() (field-type-aware, skips Hidden, handles Radio), build_selector_for_field() (FieldType → SelectorHint), is_same_origin(), resolve_url(), extract_origin()
     flow_detector.rs  -- detect_flows() (walks FormSubmission chains), build_flow_step(), name_flow()
-    test_generator.rs -- generate_test_plan(), generate_smoke_test(), generate_form_test(), generate_flow_tests(), map_suggested_assertion()
+    test_generator.rs -- generate_test_plan(app_map, value_overrides?), generate_smoke_test() (URL path assertion + error absence), generate_form_test() (post-submit assertions from ExpectedOutcome), generate_form_test_with_overrides() (internal, applies ValueConfig), build_form_test_spec() (shared builder), generate_flow_tests(), map_suggested_assertion()
   spec/
     mod.rs            -- Module exports
-    spec_model.rs     -- TestSpec, TestStep, AssertionSpec, AssertionResult, TestResult (with duration_ms, screenshots, retry_attempts)
+    spec_model.rs     -- TestSpec, TestStep, AssertionSpec (with UrlNotContains), AssertionResult, TestResult (with duration_ms, screenshots, retry_attempts)
     context.rs        -- TestContext: step tracking, assertion result collection, pass/fail counting
     runner.rs         -- TestRunner: run() and run_with_config(); execute_step_with_retry() for Assert steps; maybe_screenshot() on failure
     runner_config.rs  -- RunnerConfig: max_assertion_retries, retry_delay_ms, screenshot_on_failure, screenshot_dir
@@ -237,7 +277,7 @@ src/
     junit.rs          -- generate_junit_xml(): standard JUnit XML for CI (Jenkins, GitHub Actions), escape_xml()
   cli/
     mod.rs            -- Module exports
-    config.rs         -- Cli, Commands (clap derive), AppConfig (YAML config model), load_config(), build_explorer_config()
+    config.rs         -- Cli, Commands (clap derive), AppConfig (YAML config model with auth/values/exclusions), AuthConfig, ValueConfig, ExclusionConfig, load_config(), build_explorer_config()
     commands.rs       -- cmd_explore(), cmd_run(), cmd_generate(), build_analyzer(), load_specs(), sanitize_filename()
   trace/
     mod.rs            -- Module exports
@@ -247,12 +287,13 @@ tests/
   agent_tests.rs      -- 59 tests: agent behavior, policy, guess_value (generic + intent-based), budget, errors, form ranking (rank_form/select_best_form), constrained_value, infer_page_category, disabled input filtering
   browser_tests.rs    -- 32 tests: BrowserRequest/Response serde, session errors, query protocol, select/check/uncheck, DomElement/SelectOption, DOM constraint field deserialization
   canonical_tests.rs  -- 12 tests: classification, diffing, signals
-  explorer_tests.rs   -- 38 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow), URL utilities, build_selector_for_field (FieldType → SelectorHint)
-  page_model_tests.rs -- 58 tests: PageModel serde, MockPageAnalyzer (required, select options, login values, readonly filtering, output semantics), LlmPageAnalyzer hybrid enrichment + field_values, JSON recovery, category mapping, prompt construction, field classification (types, tags, labels), smart_select_option, classify_output_semantic, output_semantic serde
+  runner_tests.rs     -- 19 tests: RunnerConfig defaults/serde, TestResult new fields serde + backward compat, console/HTML/JUnit output with timing/retry/screenshot, screenshot embedding, UrlNotContains report output
+  explorer_tests.rs   -- 69 tests: ExplorerConfig, AppMap, TransitionKind/FlowStep/Flow serde, explore(), flow detection, test generation (smoke/form/flow + value overrides + exclusion filtering + expected outcome assertions), URL utilities (resolve_url, extract_origin, is_same_origin), build_selector_for_field (FieldType → SelectorHint)
+  page_model_tests.rs -- 78 tests: PageModel serde, MockPageAnalyzer (required, select options, login values, readonly filtering, output semantics, richer assertions via expected_outcome), LlmPageAnalyzer hybrid enrichment + field_values + success/error indicators (merge + dedup), JSON recovery, category mapping, prompt construction, field classification (types, tags, labels), smart_select_option, classify_output_semantic, output_semantic serde, ExpectedOutcome (default/serde/infer_form_outcome), NavigationTarget href serde + backward compat
   report_tests.rs     -- 15 tests: TestSuiteReport aggregation, console/HTML/JUnit formatting, JSON roundtrip
-  spec_tests.rs       -- 15 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions
+  spec_tests.rs       -- 16 tests: TestSpec YAML/JSON, TestContext, TestResult, assertions, UrlNotContains YAML roundtrip
   state_tests.rs      -- 5 tests: normalize, form intent scoring, ScreenElement constraint fields (maxlength/minlength)
-  cli_tests.rs        -- 15 tests: CLI arg parsing (explore/run/generate), config loading/defaults/YAML, builder, sanitize_filename, load_specs
+  cli_tests.rs        -- 31 tests: CLI arg parsing (explore/run/generate), config loading/defaults/YAML, builder, sanitize_filename, load_specs, AuthConfig/ValueConfig/ExclusionConfig serde + resolve logic + app_config wiring
   integration_tests.rs -- 28 tests (real browser, #[ignore]): session, DOM, queries, forms, runner, nav, canonical, form-aware exploration, flow detection, LLM page analysis
   common/
     mod.rs            -- Module exports

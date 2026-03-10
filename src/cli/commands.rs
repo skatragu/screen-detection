@@ -39,7 +39,7 @@ pub fn cmd_explore(
         );
     }
 
-    let app_map = explore_live(&config, &mut session, analyzer.as_ref())?;
+    let app_map = explore_live(&config, &mut session, analyzer.as_ref(), None, None, None)?;
     session.quit()?;
 
     // Print summary
@@ -59,9 +59,9 @@ pub fn cmd_explore(
 
     for (_url, node) in &app_map.pages {
         println!(
-            "  [{}] {:?} — {} ({} forms)",
+            "  [{}] {} — {} ({} forms)",
             node.depth,
-            node.page_model.category,
+            node.page_model.domain,
             node.title,
             node.page_model.forms.len()
         );
@@ -175,10 +175,10 @@ pub fn cmd_generate(
         eprintln!("Exploring {} for test generation...", url);
     }
 
-    let app_map = explore_live(&config, &mut session, analyzer.as_ref())?;
+    let app_map = explore_live(&config, &mut session, analyzer.as_ref(), None, None, None)?;
     session.quit()?;
 
-    let specs = generate_test_plan(&app_map);
+    let specs = generate_test_plan(&app_map, None, None);
 
     // Create output directory
     std::fs::create_dir_all(output_dir)?;

@@ -73,6 +73,9 @@ pub enum AssertionSpec {
     /// No visible text on the page contains the expected string
     TextAbsent { expected: String },
 
+    /// Current URL does NOT contain the expected substring
+    UrlNotContains { expected: String },
+
     /// A specific element's text matches
     ElementText {
         selector: String,

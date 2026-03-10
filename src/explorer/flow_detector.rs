@@ -94,10 +94,10 @@ fn build_flow_step(transition: &Transition) -> FlowStep {
 }
 
 fn name_flow(app_map: &AppMap, start_url: &str, steps: &[FlowStep]) -> String {
-    let start_category = app_map
+    let start_domain = app_map
         .pages
         .get(start_url)
-        .map(|p| format!("{:?}", p.page_model.category))
+        .map(|p| p.page_model.domain.clone())
         .unwrap_or_else(|| "Unknown".into());
 
     let last_url = steps.last().and_then(|s| match s {
@@ -105,10 +105,10 @@ fn name_flow(app_map: &AppMap, start_url: &str, steps: &[FlowStep]) -> String {
         FlowStep::FillAndSubmit { url, .. } => Some(url.as_str()),
     });
 
-    let end_category = last_url
+    let end_domain = last_url
         .and_then(|u| app_map.pages.get(u))
-        .map(|p| format!("{:?}", p.page_model.category))
+        .map(|p| p.page_model.domain.clone())
         .unwrap_or_else(|| "Unknown".into());
 
-    format!("Flow: {} -> {}", start_category, end_category)
+    format!("Flow: {} -> {}", start_domain, end_domain)
 }

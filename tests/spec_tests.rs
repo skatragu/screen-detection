@@ -485,3 +485,24 @@ fn test_element_count_assertion_result_structure() {
     assert!(!result_mismatch.passed);
     assert!(result_mismatch.message.as_ref().unwrap().contains("count is 3"));
 }
+
+// ============================================================================
+// Phase 14 Step 5: UrlNotContains assertion YAML roundtrip
+// ============================================================================
+
+#[test]
+fn url_not_contains_yaml_roundtrip() {
+    use screen_detection::spec::spec_model::AssertionSpec;
+
+    let spec = AssertionSpec::UrlNotContains { expected: "/login".into() };
+    let yaml = serde_yaml::to_string(&spec).expect("Failed to serialize UrlNotContains");
+    let parsed: AssertionSpec = serde_yaml::from_str(&yaml).expect("Failed to deserialize UrlNotContains");
+
+    assert!(
+        matches!(parsed, AssertionSpec::UrlNotContains { ref expected } if expected == "/login"),
+        "UrlNotContains should roundtrip through YAML: got {:?}",
+        parsed
+    );
+    // serde uses snake_case rename_all so the YAML tag is "url_not_contains"
+    assert!(yaml.contains("url_not_contains"), "YAML should contain type tag 'url_not_contains', got:\n{}", yaml);
+}

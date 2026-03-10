@@ -98,5 +98,6 @@ fn format_assertion_type(spec: &AssertionSpec) -> &'static str {
         AssertionSpec::ElementText { .. } => "ElementText",
         AssertionSpec::ElementVisible { .. } => "ElementVisible",
         AssertionSpec::ElementCount { .. } => "ElementCount",
+        AssertionSpec::UrlNotContains { .. } => "UrlNotContains",
     }
 }

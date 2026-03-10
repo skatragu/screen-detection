@@ -2,7 +2,7 @@ use crate::state::state_model::ScreenState;
 use crate::{screen::screen_model::ScreenSemantics, state::identity::IdentifiedElement};
 use std::collections::HashMap;
 
-use crate::screen::screen_model::{ElementKind, Form, OutputRegion, ScreenElement, Volatility};
+use crate::screen::screen_model::{ElementKind, Form, OutputRegion, ScreenElement, StructuralOutline, Volatility};
 use crate::state::normalize::{infer_output_region, normalize_output_text, text_fingerprint};
 
 pub fn build_state(url: Option<&str>, title: &str, semantics: ScreenSemantics) -> ScreenState {
@@ -15,6 +15,7 @@ pub fn build_state(url: Option<&str>, title: &str, semantics: ScreenSemantics) -
         standalone_actions: semantics.standalone_actions,
         outputs: semantics.outputs,
         identities: identities,
+        structural_outline: StructuralOutline::default(),
     }
 }
 

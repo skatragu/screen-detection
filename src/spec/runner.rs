@@ -250,6 +250,32 @@ impl TestRunner {
                 }
             }
 
+            AssertionSpec::UrlNotContains { expected } => {
+                match session.current_url() {
+                    Ok(url) => {
+                        let passed = !url.contains(expected.as_str());
+                        AssertionResult {
+                            step_index,
+                            spec: spec.clone(),
+                            passed,
+                            actual: Some(url),
+                            message: if passed {
+                                None
+                            } else {
+                                Some(format!("URL should not contain '{}' but does", expected))
+                            },
+                        }
+                    }
+                    Err(e) => AssertionResult {
+                        step_index,
+                        spec: spec.clone(),
+                        passed: false,
+                        actual: None,
+                        message: Some(format!("Failed to get URL: {}", e)),
+                    },
+                }
+            }
+
             AssertionSpec::TitleContains { expected } => {
                 // Extract DOM to get title
                 match session.extract() {

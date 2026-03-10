@@ -7,7 +7,26 @@
       "Bash(grep:*)",
       "Bash(powershell -c \"\\(Get-Content C:\\\\Users\\\\skatr\\\\sandbox\\\\preksha\\\\rust\\\\screen-detection\\\\tests\\\\agent_tests.rs\\).Count\")",
       "Bash(powershell -c \"\\(Get-Content C:\\\\Users\\\\skatr\\\\sandbox\\\\preksha\\\\rust\\\\screen-detection\\\\tests\\\\browser_tests.rs\\).Count\")",
-      "Bash(powershell -c:*)"
+      "Bash(powershell -c:*)",
+      "Bash(Get-Content \"C:\\\\Users\\\\skatr\\\\sandbox\\\\preksha\\\\rust\\\\screen-detection\\\\tests\\\\explorer_tests.rs\")",
+      "Bash(Measure-Object -Line)",
+      "Bash(cmd /c \"find /c /v \"\" \"C:Usersskatrsandboxpreksharustscreen-detectiontestsexplorer_tests.rs\"\")",
+      "Bash(powershell -Command:*)",
+      "Bash(findstr:*)",
+      "Bash(python:*)",
+      "Bash(find:*)",
+      "Bash(python3 -:*)",
+      "Bash(py --version)",
+      "Bash(/c/Python312/python -:*)",
+      "Bash(/c/Python312/python.exe --version)",
+      "Bash(/c/Python312/python.exe -:*)",
+      "Bash(/c/Python312/python.exe -c \":*)",
+      "Bash(/c/Users/skatr/sandbox/preksha/rust/screen-detection/phase15_step1.py:*)",
+      "Bash(python3 /c/Users/skatr/sandbox/preksha/rust/screen-detection/phase15_step1.py)",
+      "Bash(/tmp/phase15_step1.py:*)",
+      "Bash(/tmp/update_browser_server.py:*)",
+      "Bash(/tmp/update_bs.py:*)",
+      "Bash(git stash)"
     ]
   }
 }

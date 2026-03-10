@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    screen::screen_model::{Form, ScreenElement},
+    screen::screen_model::{Form, ScreenElement, StructuralOutline},
     state::identity::IdentifiedElement,
 };
 
@@ -14,6 +14,7 @@ pub struct ScreenState {
     pub standalone_actions: Vec<ScreenElement>,
     pub outputs: Vec<ScreenElement>,
     pub identities: HashMap<String, IdentifiedElement>,
+    pub structural_outline: StructuralOutline,
 }
 
 #[derive(Debug)]

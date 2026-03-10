@@ -5,8 +5,7 @@ use screen_detection::{
     agent::{
         agent::{Agent, execute_action, gate_decision},
         agent_model::{AgentAction, AgentMemory, DecisionType, MAX_LOOP_REPEATS, ModelDecision},
-        ai_model::{DeterministicPolicy, constrained_value, guess_value, infer_page_category, rank_form, select_best_form},
-        page_model::PageCategory,
+        ai_model::{DeterministicPolicy, constrained_value, guess_value, rank_form, select_best_form},
         budget::{BudgetDecision, check_budgets},
         error::AgentError,
     },
@@ -76,6 +75,11 @@ fn mock_screen_with_form() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             actions: vec![ScreenElement {
                 label: Some("Sign In".into()),
@@ -93,6 +97,11 @@ fn mock_screen_with_form() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             primary_action: None,
             intent: None,
@@ -100,6 +109,7 @@ fn mock_screen_with_form() -> ScreenState {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     }
 }
 
@@ -443,28 +453,28 @@ fn agent_with_deterministic_policy() {
 
 #[test]
 fn guess_value_uses_label_heuristics() {
-    assert_eq!(guess_value("email", None, None), "user@example.com");
-    assert_eq!(guess_value("Email Address", None, None), "user@example.com");
-    assert_eq!(guess_value("password", None, None), "TestPass123!");
-    assert_eq!(guess_value("Phone Number", None, None), "555-0100");
-    assert_eq!(guess_value("search", None, None), "test query");
-    assert_eq!(guess_value("query", None, None), "test query");
-    assert_eq!(guess_value("username", None, None), "testuser");
-    assert_eq!(guess_value("Full Name", None, None), "Jane Doe");
-    assert_eq!(guess_value("zip code", None, None), "90210");
-    assert_eq!(guess_value("some random field", None, None), "test");
+    assert_eq!(guess_value("email", None), "user@example.com");
+    assert_eq!(guess_value("Email Address", None), "user@example.com");
+    assert_eq!(guess_value("password", None), "TestPass123!");
+    assert_eq!(guess_value("Phone Number", None), "555-0100");
+    assert_eq!(guess_value("search", None), "test query");
+    assert_eq!(guess_value("query", None), "test query");
+    assert_eq!(guess_value("username", None), "testuser");
+    assert_eq!(guess_value("Full Name", None), "Jane Doe");
+    assert_eq!(guess_value("zip code", None), "90210");
+    assert_eq!(guess_value("some random field", None), "test");
 }
 
 #[test]
 fn guess_value_falls_back_to_input_type() {
     // Generic label, but specific input type (no category)
-    assert_eq!(guess_value("enter value", Some("email"), None), "user@example.com");
-    assert_eq!(guess_value("enter value", Some("password"), None), "TestPass123!");
-    assert_eq!(guess_value("enter value", Some("tel"), None), "555-0100");
-    assert_eq!(guess_value("enter value", Some("number"), None), "42");
-    assert_eq!(guess_value("enter value", Some("date"), None), "2025-01-15");
+    assert_eq!(guess_value("enter value", Some("email")), "user@example.com");
+    assert_eq!(guess_value("enter value", Some("password")), "TestPass123!");
+    assert_eq!(guess_value("enter value", Some("tel")), "555-0100");
+    assert_eq!(guess_value("enter value", Some("number")), "42");
+    assert_eq!(guess_value("enter value", Some("date")), "2025-01-15");
     // Unknown type falls to final fallback
-    assert_eq!(guess_value("enter value", Some("text"), None), "test");
+    assert_eq!(guess_value("enter value", Some("text")), "test");
 }
 
 #[test]
@@ -514,6 +524,11 @@ fn deterministic_policy_multi_input_form() {
                     maxlength: None,
                     minlength: None,
                     readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -531,6 +546,11 @@ fn deterministic_policy_multi_input_form() {
                     maxlength: None,
                     minlength: None,
                     readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 },
                 ScreenElement {
                     label: Some("Phone".into()),
@@ -548,6 +568,11 @@ fn deterministic_policy_multi_input_form() {
                     maxlength: None,
                     minlength: None,
                     readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 },
             ],
             actions: vec![ScreenElement {
@@ -566,6 +591,11 @@ fn deterministic_policy_multi_input_form() {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             primary_action: None,
             intent: None,
@@ -573,6 +603,7 @@ fn deterministic_policy_multi_input_form() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
 
     let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
@@ -734,6 +765,7 @@ fn deterministic_policy_no_forms_returns_none() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
     let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
     let memory = AgentMemory::default();
@@ -767,6 +799,11 @@ fn deterministic_policy_form_no_inputs_still_submits() {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             primary_action: None,
             intent: None,
@@ -774,6 +811,7 @@ fn deterministic_policy_form_no_inputs_still_submits() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
     let diff = diff_with_signal(SemanticSignal::ScreenLoaded);
     let memory = AgentMemory::default();
@@ -861,6 +899,7 @@ fn execute_action_errors_on_missing_url() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
 
     let action = AgentAction::FillInput {
@@ -887,6 +926,7 @@ fn execute_action_errors_on_missing_element() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
 
     // FillInput with unknown identity and no matching label
@@ -944,6 +984,7 @@ fn execute_action_navigate_to_is_noop_in_subprocess_mode() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
 
     let action = AgentAction::NavigateTo {
@@ -965,6 +1006,7 @@ fn execute_action_session_errors_on_missing_element() {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
 
     let action = AgentAction::FillInput {
@@ -985,128 +1027,100 @@ fn execute_action_session_errors_on_missing_element() {
 
 #[test]
 fn guess_value_first_last_name() {
-    assert_eq!(guess_value("First Name", None, None), "Jane");
-    assert_eq!(guess_value("Last Name", None, None), "Doe");
-    assert_eq!(guess_value("Surname", None, None), "Doe");
-    assert_eq!(guess_value("Full Name", None, None), "Jane Doe");
+    assert_eq!(guess_value("First Name", None), "Jane");
+    assert_eq!(guess_value("Last Name", None), "Doe");
+    assert_eq!(guess_value("Surname", None), "Doe");
+    assert_eq!(guess_value("Full Name", None), "Jane Doe");
 }
 
 #[test]
 fn guess_value_address_fields() {
-    assert_eq!(guess_value("Street Address", None, None), "123 Test Street");
-    assert_eq!(guess_value("Address Line 1", None, None), "123 Test Street");
-    assert_eq!(guess_value("Address", None, None), "123 Test Street, Apt 1");
-    assert_eq!(guess_value("City", None, None), "Springfield");
-    assert_eq!(guess_value("State", None, None), "CA");
-    assert_eq!(guess_value("Province", None, None), "CA");
-    assert_eq!(guess_value("Region", None, None), "CA");
-    assert_eq!(guess_value("Country", None, None), "US");
+    assert_eq!(guess_value("Street Address", None), "123 Test Street");
+    assert_eq!(guess_value("Address Line 1", None), "123 Test Street");
+    assert_eq!(guess_value("Address", None), "123 Test Street, Apt 1");
+    assert_eq!(guess_value("City", None), "Springfield");
+    assert_eq!(guess_value("State", None), "CA");
+    assert_eq!(guess_value("Province", None), "CA");
+    assert_eq!(guess_value("Region", None), "CA");
+    assert_eq!(guess_value("Country", None), "US");
 }
 
 #[test]
 fn guess_value_payment_fields() {
-    assert_eq!(guess_value("Card Number", None, None), "4111111111111111");
-    assert_eq!(guess_value("Credit Card", None, None), "4111111111111111");
-    assert_eq!(guess_value("CVV", None, None), "123");
-    assert_eq!(guess_value("CVC", None, None), "123");
-    assert_eq!(guess_value("Security Code", None, None), "123");
-    assert_eq!(guess_value("Expiration Date", None, None), "12/2028");
-    assert_eq!(guess_value("Exp Date", None, None), "12/2028");
+    assert_eq!(guess_value("Card Number", None), "4111111111111111");
+    assert_eq!(guess_value("Credit Card", None), "4111111111111111");
+    assert_eq!(guess_value("CVV", None), "123");
+    assert_eq!(guess_value("CVC", None), "123");
+    assert_eq!(guess_value("Security Code", None), "123");
+    assert_eq!(guess_value("Expiration Date", None), "12/2028");
+    assert_eq!(guess_value("Exp Date", None), "12/2028");
 }
 
 #[test]
 fn guess_value_textarea_fields() {
-    assert_eq!(guess_value("Comment", None, None), "This is a test comment.");
-    assert_eq!(guess_value("Message", None, None), "This is a test comment.");
-    assert_eq!(guess_value("Description", None, None), "This is a test comment.");
-    assert_eq!(guess_value("Bio", None, None), "This is a test comment.");
-    assert_eq!(guess_value("Notes", None, None), "This is a test comment.");
+    assert_eq!(guess_value("Comment", None), "This is a test comment.");
+    assert_eq!(guess_value("Message", None), "This is a test comment.");
+    assert_eq!(guess_value("Description", None), "This is a test comment.");
+    assert_eq!(guess_value("Bio", None), "This is a test comment.");
+    assert_eq!(guess_value("Notes", None), "This is a test comment.");
 }
 
 #[test]
 fn guess_value_identity_fields() {
-    assert_eq!(guess_value("Company", None, None), "Acme Corp");
-    assert_eq!(guess_value("Organization", None, None), "Acme Corp");
-    assert_eq!(guess_value("Age", None, None), "30");
-    assert_eq!(guess_value("Birthday", None, None), "1990-01-15");
-    assert_eq!(guess_value("Date of Birth", None, None), "1990-01-15");
-    assert_eq!(guess_value("DOB", None, None), "1990-01-15");
+    assert_eq!(guess_value("Company", None), "Acme Corp");
+    assert_eq!(guess_value("Organization", None), "Acme Corp");
+    assert_eq!(guess_value("Age", None), "30");
+    assert_eq!(guess_value("Birthday", None), "1990-01-15");
+    assert_eq!(guess_value("Date of Birth", None), "1990-01-15");
+    assert_eq!(guess_value("DOB", None), "1990-01-15");
 }
 
 #[test]
 fn guess_value_time_field() {
-    assert_eq!(guess_value("Time", None, None), "10:30");
-    assert_eq!(guess_value("enter value", Some("time"), None), "10:30");
+    assert_eq!(guess_value("Time", None), "10:30");
+    assert_eq!(guess_value("enter value", Some("time")), "10:30");
 }
 
 #[test]
 fn guess_value_confirm_password() {
-    assert_eq!(guess_value("Confirm Password", None, None), "TestPass123!");
-    assert_eq!(guess_value("Confirm your password", None, None), "TestPass123!");
+    assert_eq!(guess_value("Confirm Password", None), "TestPass123!");
+    assert_eq!(guess_value("Confirm your password", None), "TestPass123!");
 }
 
 #[test]
 fn guess_value_input_type_fallbacks_expanded() {
-    assert_eq!(guess_value("enter value", Some("search"), None), "test query");
-    assert_eq!(guess_value("enter value", Some("month"), None), "2025-01");
-    assert_eq!(guess_value("enter value", Some("week"), None), "2025-W03");
-    assert_eq!(guess_value("enter value", Some("color"), None), "#336699");
-    assert_eq!(guess_value("enter value", Some("range"), None), "50");
-    assert_eq!(guess_value("enter value", Some("checkbox"), None), "true");
-    assert_eq!(guess_value("enter value", Some("radio"), None), "option1");
+    assert_eq!(guess_value("enter value", Some("search")), "test query");
+    assert_eq!(guess_value("enter value", Some("month")), "2025-01");
+    assert_eq!(guess_value("enter value", Some("week")), "2025-W03");
+    assert_eq!(guess_value("enter value", Some("color")), "#336699");
+    assert_eq!(guess_value("enter value", Some("range")), "50");
+    assert_eq!(guess_value("enter value", Some("checkbox")), "true");
+    assert_eq!(guess_value("enter value", Some("radio")), "option1");
 }
 
 #[test]
 fn guess_value_address_ordering() {
     // "street" should match before generic "address"
-    assert_eq!(guess_value("Street", None, None), "123 Test Street");
-    assert_eq!(guess_value("Mailing Address", None, None), "123 Test Street, Apt 1");
+    assert_eq!(guess_value("Street", None), "123 Test Street");
+    assert_eq!(guess_value("Mailing Address", None), "123 Test Street, Apt 1");
 }
 
 #[test]
 fn guess_value_card_vs_number() {
     // "card number" should match card pattern, not generic "number"
-    assert_eq!(guess_value("Card Number", None, None), "4111111111111111");
-    assert_eq!(guess_value("Number of items", None, None), "42");
+    assert_eq!(guess_value("Card Number", None), "4111111111111111");
+    assert_eq!(guess_value("Number of items", None), "42");
 }
 
-// =========================================================================
-// Intent-based (category-aware) guess_value tests
-// =========================================================================
 
-#[test]
-fn guess_value_login_context() {
-    let cat = PageCategory::Login;
-    assert_eq!(guess_value("Email", None, Some(&cat)), "testuser@example.com");
-    assert_eq!(guess_value("Username", None, Some(&cat)), "testuser@example.com");
-    assert_eq!(guess_value("Password", None, Some(&cat)), "TestPass123!");
-}
 
-#[test]
-fn guess_value_registration_context() {
-    let cat = PageCategory::Registration;
-    assert_eq!(guess_value("Email", None, Some(&cat)), "newuser_test@example.com");
-    assert_eq!(guess_value("Password", None, Some(&cat)), "NewPass456!");
-    assert_eq!(guess_value("Confirm Password", None, Some(&cat)), "NewPass456!");
-    assert_eq!(guess_value("Username", None, Some(&cat)), "new_testuser");
-}
-
-#[test]
-fn guess_value_checkout_context() {
-    let cat = PageCategory::Checkout;
-    assert_eq!(guess_value("City", None, Some(&cat)), "New York");
-    assert_eq!(guess_value("Zip Code", None, Some(&cat)), "10001");
-    assert_eq!(guess_value("State", None, Some(&cat)), "NY");
-    assert_eq!(guess_value("Card Number", None, Some(&cat)), "4111111111111111");
-    assert_eq!(guess_value("Address", None, Some(&cat)), "123 Main St");
-}
 
 #[test]
 fn guess_value_no_category_falls_through() {
     // Without category, generic patterns apply
-    assert_eq!(guess_value("Email", None, None), "user@example.com");
-    assert_eq!(guess_value("City", None, None), "Springfield");
-    assert_eq!(guess_value("State", None, None), "CA");
+    assert_eq!(guess_value("Email", None), "user@example.com");
+    assert_eq!(guess_value("City", None), "Springfield");
+    assert_eq!(guess_value("State", None), "CA");
 }
 
 // ============================================================================
@@ -1124,15 +1138,20 @@ fn rank_form_scores_inputs() {
             role: None, input_type: None, required: false,
             placeholder: None, id: None, href: None, options: None,
             name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
         }],
         actions: vec![], primary_action: None, intent: None,
     };
     let big_form = Form {
         id: "big".into(),
         inputs: vec![
-            ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
-            ScreenElement { label: Some("Password".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
-            ScreenElement { label: Some("Name".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+            ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
+            ScreenElement { label: Some("Password".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
+            ScreenElement { label: Some("Name".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
         ],
         actions: vec![], primary_action: None, intent: None,
     };
@@ -1147,12 +1166,22 @@ fn rank_form_scores_primary_action() {
             label: Some("X".into()), kind: ElementKind::Input, tag: Some("input".into()),
             role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
             name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
         }],
         actions: vec![],
         primary_action: Some(ScreenElement {
             label: Some("Submit".into()), kind: ElementKind::Action, tag: Some("button".into()),
             role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
             name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
         }),
         intent: None,
     };
@@ -1162,6 +1191,11 @@ fn rank_form_scores_primary_action() {
             label: Some("X".into()), kind: ElementKind::Input, tag: Some("input".into()),
             role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
             name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
         }],
         actions: vec![], primary_action: None, intent: None,
     };
@@ -1200,20 +1234,30 @@ fn select_best_form_chooses_login_over_newsletter() {
             label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()),
             role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None,
             name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
         }],
         actions: vec![], primary_action: None, intent: None,
     };
     let login = Form {
         id: "login".into(),
         inputs: vec![
-            ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
-            ScreenElement { label: Some("Password".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("password".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+            ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
+            ScreenElement { label: Some("Password".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("password".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
         ],
         actions: vec![],
         primary_action: Some(ScreenElement {
             label: Some("Sign In".into()), kind: ElementKind::Action, tag: Some("button".into()),
             role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None,
             name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
         }),
         intent: Some(FormIntent { label: "Authentication".into(), confidence: 0.8, signals: vec![IntentSignal::InputType("password".into())] }),
     };
@@ -1241,16 +1285,27 @@ fn deterministic_policy_uses_page_category() {
                 role: Some("textbox".into()), input_type: Some("email".into()),
                 required: false, placeholder: None, id: None, href: None, options: None,
                 name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             actions: vec![ScreenElement {
                 label: Some("Sign In".into()), kind: ElementKind::Action, tag: Some("button".into()),
                 role: Some("button".into()), input_type: Some("submit".into()),
                 required: false, placeholder: None, id: None, href: None, options: None,
                 name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             primary_action: None, intent: None,
         }],
         standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
     let diff = SemanticStateDiff {
         forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
@@ -1264,7 +1319,7 @@ fn deterministic_policy_uses_page_category() {
     // Should produce Login-context email value
     if let Some(AgentAction::FillAndSubmitForm { values, .. }) = &decision.next_action {
         let email_val = values.iter().find(|(l, _)| l == "Email").map(|(_, v)| v.as_str());
-        assert_eq!(email_val, Some("testuser@example.com"), "Login context should produce testuser@example.com");
+        assert_eq!(email_val, Some("user@example.com"), "Email field should produce generic email value");
     } else {
         panic!("Expected FillAndSubmitForm action");
     }
@@ -1284,15 +1339,20 @@ fn deterministic_policy_selects_main_form() {
                     role: None, input_type: Some("email".into()),
                     required: false, placeholder: None, id: None, href: None, options: None,
                     name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 }],
                 actions: vec![], primary_action: None, intent: None,
             },
             Form {
                 id: "contact".into(),
                 inputs: vec![
-                    ScreenElement { label: Some("Name".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("text".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
-                    ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
-                    ScreenElement { label: Some("Message".into()), kind: ElementKind::Input, tag: Some("textarea".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false },
+                    ScreenElement { label: Some("Name".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("text".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
+                    ScreenElement { label: Some("Email".into()), kind: ElementKind::Input, tag: Some("input".into()), role: None, input_type: Some("email".into()), required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
+                    ScreenElement { label: Some("Message".into()), kind: ElementKind::Input, tag: Some("textarea".into()), role: None, input_type: None, required: false, placeholder: None, id: None, href: None, options: None, name: None, value: None, maxlength: None, minlength: None, readonly: false, fieldset_legend: None, section_heading: None, nearby_help_text: None, autocomplete: None, aria_describedby_text: None },
                 ],
                 actions: vec![],
                 primary_action: Some(ScreenElement {
@@ -1300,11 +1360,17 @@ fn deterministic_policy_selects_main_form() {
                     role: None, input_type: Some("submit".into()),
                     required: false, placeholder: None, id: None, href: None, options: None,
                     name: None, value: None, maxlength: None, minlength: None, readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 }),
                 intent: None,
             },
         ],
         standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
+        structural_outline: Default::default(),
     };
     let diff = SemanticStateDiff {
         forms: FormDiff { added: vec![], removed: vec![], changed: vec![] },
@@ -1335,6 +1401,21 @@ fn disabled_input_excluded_from_form() {
             disabled: true, required: false, form_id: Some("f".into()),
             id: None, name: None, placeholder: None, href: None, value: None, options: None,
             pattern: None, minlength: None, maxlength: None, min: None, max: None, readonly: false,
+        heading_level: None,
+        autocomplete: None,
+        inputmode: None,
+        title_attr: None,
+        form_action: None,
+        form_method: None,
+        aria_describedby_text: None,
+        aria_invalid: false,
+        aria_required: false,
+        associated_label_text: None,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        semantic_section: None,
+        visible: false,
         },
         DomElement {
             tag: "input".into(), text: None, role: Some("textbox".into()),
@@ -1342,6 +1423,21 @@ fn disabled_input_excluded_from_form() {
             disabled: false, required: false, form_id: Some("f".into()),
             id: None, name: None, placeholder: None, href: None, value: None, options: None,
             pattern: None, minlength: None, maxlength: None, min: None, max: None, readonly: false,
+        heading_level: None,
+        autocomplete: None,
+        inputmode: None,
+        title_attr: None,
+        form_action: None,
+        form_method: None,
+        aria_describedby_text: None,
+        aria_invalid: false,
+        aria_required: false,
+        associated_label_text: None,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        semantic_section: None,
+        visible: false,
         },
     ];
     let semantics = classify(&elements);
@@ -1360,6 +1456,21 @@ fn screen_element_carries_name_and_value() {
         placeholder: Some("Enter name".into()), href: None,
         value: Some("existing_value".into()), options: None,
         pattern: None, minlength: None, maxlength: None, min: None, max: None, readonly: false,
+        heading_level: None,
+        autocomplete: None,
+        inputmode: None,
+        title_attr: None,
+        form_action: None,
+        form_method: None,
+        aria_describedby_text: None,
+        aria_invalid: false,
+        aria_required: false,
+        associated_label_text: None,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        semantic_section: None,
+        visible: false,
     }];
     let semantics = classify(&elements);
     let form = semantics.forms.iter().find(|f| f.id == "f").unwrap();
@@ -1373,26 +1484,26 @@ fn screen_element_carries_name_and_value() {
 
 #[test]
 fn constrained_value_truncates_to_maxlength() {
-    let val = constrained_value("Email", None, None, Some(5), None);
+    let val = constrained_value("Email", None, Some(5), None);
     assert_eq!(val.len(), 5);
     assert_eq!(val, "user@");
 }
 
 #[test]
 fn constrained_value_pads_to_minlength() {
-    let val = constrained_value("Age", Some("number"), None, None, Some(10));
+    let val = constrained_value("Age", Some("number"), None, Some(10));
     assert!(val.len() >= 10);
 }
 
 #[test]
 fn constrained_value_no_constraints_passes_through() {
-    let val = constrained_value("Email", None, None, None, None);
-    assert_eq!(val, guess_value("Email", None, None));
+    let val = constrained_value("Email", None, None, None);
+    assert_eq!(val, guess_value("Email", None));
 }
 
 #[test]
 fn constrained_value_respects_both() {
-    let val = constrained_value("Name", None, None, Some(8), Some(4));
+    let val = constrained_value("Name", None, Some(8), Some(4));
     assert!(val.len() >= 4);
     assert!(val.len() <= 8);
 }
@@ -1401,23 +1512,3 @@ fn constrained_value_respects_both() {
 // Phase 13: Infer Page Category
 // ============================================================================
 
-#[test]
-fn infer_page_category_from_title() {
-    let screen = ScreenState {
-        url: None, title: "Login - App".into(),
-        forms: vec![], standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
-    };
-    assert_eq!(infer_page_category(&screen), PageCategory::Login);
-
-    let screen2 = ScreenState {
-        url: None, title: "Search Products".into(),
-        forms: vec![], standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
-    };
-    assert_eq!(infer_page_category(&screen2), PageCategory::Search);
-
-    let screen3 = ScreenState {
-        url: None, title: "My Dashboard".into(),
-        forms: vec![], standalone_actions: vec![], outputs: vec![], identities: HashMap::new(),
-    };
-    assert_eq!(infer_page_category(&screen3), PageCategory::Dashboard);
-}

@@ -43,6 +43,57 @@ pub struct DomElement {
     pub max: Option<String>,
     #[serde(default)]
     pub readonly: bool,
+    // Rich DOM context fields added in Phase 15
+    #[serde(default)]
+    pub heading_level: Option<u8>,
+    #[serde(default)]
+    pub autocomplete: Option<String>,
+    #[serde(default)]
+    pub inputmode: Option<String>,
+    #[serde(default)]
+    pub title_attr: Option<String>,
+    #[serde(default)]
+    pub form_action: Option<String>,
+    #[serde(default)]
+    pub form_method: Option<String>,
+    #[serde(rename = "aria_describedby_text", default)]
+    pub aria_describedby_text: Option<String>,
+    #[serde(default)]
+    pub aria_invalid: bool,
+    #[serde(default)]
+    pub aria_required: bool,
+    #[serde(default)]
+    pub associated_label_text: Option<String>,
+    #[serde(default)]
+    pub fieldset_legend: Option<String>,
+    #[serde(default)]
+    pub section_heading: Option<String>,
+    #[serde(default)]
+    pub nearby_help_text: Option<String>,
+    #[serde(default)]
+    pub semantic_section: Option<String>,
+    #[serde(default)]
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HeadingEntry {
+    pub level: u8,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LandmarkEntry {
+    pub tag: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct StructuralOutline {
+    #[serde(default)]
+    pub headings: Vec<HeadingEntry>,
+    #[serde(default)]
+    pub landmarks: Vec<LandmarkEntry>,
 }
 
 #[derive(Debug)]
@@ -70,6 +121,12 @@ pub struct ScreenElement {
     pub maxlength: Option<u32>,
     pub minlength: Option<u32>,
     pub readonly: bool,
+    // Rich DOM context fields for AI prompt building
+    pub fieldset_legend: Option<String>,
+    pub section_heading: Option<String>,
+    pub nearby_help_text: Option<String>,
+    pub autocomplete: Option<String>,
+    pub aria_describedby_text: Option<String>,
 }
 
 #[derive(Debug, Clone)]

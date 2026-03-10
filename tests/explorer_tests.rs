@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
 use screen_detection::agent::page_model::{
-    FieldModel, FieldType, FormModel, NavigationTarget, PageCategory, PageModel,
+    ExpectedOutcome, FieldModel, FieldType, FormModel, NavigationTarget, PageModel,
     SuggestedAssertion,
 };
+use screen_detection::cli::config::AuthConfig;
 use screen_detection::explorer::app_map::{
     AppMap, ExplorerConfig, Flow, FlowStep, PageNode, Transition, TransitionKind,
 };
-use screen_detection::explorer::explorer::{build_selector_for_field, explore, is_same_origin, resolve_url};
+use screen_detection::explorer::explorer::{build_selector_for_field, explore, extract_origin, is_same_origin, resolve_url};
 use screen_detection::explorer::flow_detector::detect_flows;
 use screen_detection::explorer::test_generator::{
     generate_flow_tests, generate_form_test, generate_smoke_test, generate_test_plan,
@@ -46,6 +47,11 @@ fn login_screen() -> ScreenState {
                     maxlength: None,
                     minlength: None,
                     readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 },
                 ScreenElement {
                     label: Some("Password".into()),
@@ -63,6 +69,11 @@ fn login_screen() -> ScreenState {
                     maxlength: None,
                     minlength: None,
                     readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
                 },
             ],
             actions: vec![ScreenElement {
@@ -81,6 +92,11 @@ fn login_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Sign In".into()),
@@ -98,6 +114,11 @@ fn login_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }),
             intent: Some(FormIntent {
                 label: "Authentication".into(),
@@ -125,6 +146,11 @@ fn login_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             },
             ScreenElement {
                 label: Some("Forgot Password".into()),
@@ -142,10 +168,16 @@ fn login_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             },
         ],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     }
 }
 
@@ -171,6 +203,11 @@ fn search_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             actions: vec![ScreenElement {
                 label: Some("Search".into()),
@@ -188,6 +225,11 @@ fn search_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }],
             primary_action: Some(ScreenElement {
                 label: Some("Search".into()),
@@ -205,6 +247,11 @@ fn search_screen() -> ScreenState {
                 maxlength: None,
                 minlength: None,
                 readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
             }),
             intent: Some(FormIntent {
                 label: "Search".into(),
@@ -215,13 +262,14 @@ fn search_screen() -> ScreenState {
         standalone_actions: vec![],
         outputs: vec![],
         identities: HashMap::new(),
+        structural_outline: Default::default(),
     }
 }
 
 fn sample_page_model() -> PageModel {
     PageModel {
         purpose: "Login page for user authentication".into(),
-        category: PageCategory::Login,
+        domain: "login".to_string(),
         forms: vec![FormModel {
             form_id: "login".into(),
             purpose: "Authentication".into(),
@@ -240,6 +288,7 @@ fn sample_page_model() -> PageModel {
                 },
             ],
             submit_label: Some("Sign In".into()),
+            expected_outcome: ExpectedOutcome::default(),
         }],
         outputs: vec![],
         suggested_assertions: vec![SuggestedAssertion {
@@ -250,14 +299,19 @@ fn sample_page_model() -> PageModel {
         navigation_targets: vec![NavigationTarget {
             label: "Sign Up".into(),
             likely_destination: "Registration page".into(),
+            href: None,
         }],
+        expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
     }
 }
 
 fn search_page_model() -> PageModel {
     PageModel {
         purpose: "Search page for querying content".into(),
-        category: PageCategory::Search,
+        domain: "search".to_string(),
         forms: vec![FormModel {
             form_id: "search".into(),
             purpose: "Search".into(),
@@ -268,6 +322,7 @@ fn search_page_model() -> PageModel {
                 suggested_test_value: "test query".into(),
             }],
             submit_label: Some("Search".into()),
+            expected_outcome: ExpectedOutcome::default(),
         }],
         outputs: vec![],
         suggested_assertions: vec![SuggestedAssertion {
@@ -276,13 +331,17 @@ fn search_page_model() -> PageModel {
             description: "Verify page title contains 'Search'".into(),
         }],
         navigation_targets: vec![],
+        expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
     }
 }
 
 fn dashboard_page_model() -> PageModel {
     PageModel {
         purpose: "User dashboard after login".into(),
-        category: PageCategory::Dashboard,
+        domain: "dashboard".to_string(),
         forms: vec![],
         outputs: vec![],
         suggested_assertions: vec![SuggestedAssertion {
@@ -293,14 +352,19 @@ fn dashboard_page_model() -> PageModel {
         navigation_targets: vec![NavigationTarget {
             label: "Settings".into(),
             likely_destination: "Settings page".into(),
+            href: None,
         }],
+        expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
     }
 }
 
 fn settings_page_model() -> PageModel {
     PageModel {
         purpose: "User settings page".into(),
-        category: PageCategory::Settings,
+        domain: "settings".to_string(),
         forms: vec![FormModel {
             form_id: "profile".into(),
             purpose: "Profile settings".into(),
@@ -311,10 +375,15 @@ fn settings_page_model() -> PageModel {
                 suggested_test_value: "Test User".into(),
             }],
             submit_label: Some("Save".into()),
+            expected_outcome: ExpectedOutcome::default(),
         }],
         outputs: vec![],
         suggested_assertions: vec![],
         navigation_targets: vec![],
+        expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
     }
 }
 
@@ -457,7 +526,7 @@ fn explore_single_page_login() {
 
     let node = &map.pages["https://example.com/login"];
     assert_eq!(node.depth, 0);
-    assert_eq!(node.page_model.category, PageCategory::Login);
+    assert!(!node.page_model.purpose.is_empty());
     assert_eq!(node.page_model.forms.len(), 1);
     assert_eq!(node.page_model.navigation_targets.len(), 2);
 }
@@ -479,7 +548,7 @@ fn explore_single_page_search() {
     assert!(map.has_page("https://example.com/search"));
 
     let node = &map.pages["https://example.com/search"];
-    assert_eq!(node.page_model.category, PageCategory::Search);
+    assert!(!node.page_model.purpose.is_empty());
     assert_eq!(node.page_model.forms.len(), 1);
     assert_eq!(node.page_model.forms[0].form_id, "search");
 }
@@ -499,16 +568,16 @@ fn smoke_test_generation() {
     // First step: Wait
     assert!(matches!(spec.steps[0], TestStep::Wait { duration_ms: 1000 }));
 
-    // Second step: Assert with title_contains
+    // Second step: Assert — now includes title_contains + url_contains (from path "/login")
     match &spec.steps[1] {
         TestStep::Assert { assertions } => {
-            assert_eq!(assertions.len(), 1);
-            match &assertions[0] {
-                AssertionSpec::TitleContains { expected } => {
-                    assert_eq!(expected, "Login");
-                }
-                other => panic!("Expected TitleContains, got {:?}", other),
-            }
+            // At minimum: TitleContains for the page title keyword
+            assert!(assertions.len() >= 1, "Expected at least 1 assertion");
+            let has_title = assertions.iter().any(|a| matches!(a, AssertionSpec::TitleContains { .. }));
+            assert!(has_title, "Expected TitleContains assertion");
+            // URL path assertion added because "/login" is a meaningful path
+            let has_url = assertions.iter().any(|a| matches!(a, AssertionSpec::UrlContains { expected } if expected.contains("login")));
+            assert!(has_url, "Expected UrlContains assertion for /login path");
         }
         other => panic!("Expected Assert step, got {:?}", other),
     }
@@ -529,7 +598,9 @@ fn form_test_generation() {
         "Form: Authentication on Login page for user authentication"
     );
     assert_eq!(spec.start_url, "https://example.com/login");
-    assert_eq!(spec.steps.len(), 1);
+
+    // Steps: FillAndSubmit + Wait + (optionally Assert when outcome is non-empty)
+    assert!(spec.steps.len() >= 2, "Expected at least FillAndSubmit + Wait");
 
     match &spec.steps[0] {
         TestStep::FillAndSubmit {
@@ -544,6 +615,9 @@ fn form_test_generation() {
         }
         other => panic!("Expected FillAndSubmit step, got {:?}", other),
     }
+
+    // Second step is always Wait
+    assert!(matches!(spec.steps[1], TestStep::Wait { duration_ms: 1000 }));
 }
 
 // ============================================================================
@@ -566,7 +640,7 @@ fn generate_test_plan_full() {
         page_model: search_page_model(),
     });
 
-    let specs = generate_test_plan(&map);
+    let specs = generate_test_plan(&map, None, None);
 
     // Login page: 1 smoke + 1 form = 2
     // Search page: 1 smoke + 1 form = 2
@@ -724,10 +798,11 @@ fn resolve_url_absolute() {
         Some("http://other.com".into())
     );
 
-    // Non-URL labels return None
-    assert_eq!(resolve_url("https://example.com", "Sign Up"), None);
-    assert_eq!(resolve_url("https://example.com", "About Us"), None);
-    assert_eq!(resolve_url("https://example.com", "/relative/path"), None);
+    // Root-relative paths are now resolved (not filtered out)
+    assert_eq!(
+        resolve_url("https://example.com", "/relative/path"),
+        Some("https://example.com/relative/path".into())
+    );
 }
 
 // ============================================================================
@@ -1121,7 +1196,7 @@ fn generate_test_plan_includes_flows() {
         },
     });
 
-    let specs = generate_test_plan(&map);
+    let specs = generate_test_plan(&map, None, None);
 
     // Login page: 1 smoke + 1 form = 2
     // Dashboard page: 1 smoke + 0 forms = 1
@@ -1209,4 +1284,610 @@ fn build_selector_includes_form_id() {
     let field = FieldModel { label: "X".into(), field_type: FieldType::Text, required: false, suggested_test_value: "y".into() };
     let s = build_selector_for_field(&field, "my_form");
     assert_eq!(s.form_id, Some("my_form".into()));
+}
+
+// ============================================================================
+// resolve_url — new behavior (relative URL resolution)
+// ============================================================================
+
+#[test]
+fn resolve_url_root_relative() {
+    // Root-relative path → origin + path
+    assert_eq!(
+        resolve_url("https://example.com/login", "/dashboard"),
+        Some("https://example.com/dashboard".into())
+    );
+    assert_eq!(
+        resolve_url("https://example.com/app/page", "/settings"),
+        Some("https://example.com/settings".into())
+    );
+}
+
+#[test]
+fn resolve_url_relative_path() {
+    // Relative path → resolved against base directory
+    assert_eq!(
+        resolve_url("https://example.com/pages/home", "about"),
+        Some("https://example.com/pages/about".into())
+    );
+    assert_eq!(
+        resolve_url("https://example.com/", "contact"),
+        Some("https://example.com/contact".into())
+    );
+}
+
+#[test]
+fn resolve_url_protocol_relative() {
+    // Protocol-relative — inherits scheme from base
+    assert_eq!(
+        resolve_url("https://example.com", "//cdn.example.com/page"),
+        Some("https://cdn.example.com/page".into())
+    );
+    assert_eq!(
+        resolve_url("http://example.com", "//cdn.example.com/page"),
+        Some("http://cdn.example.com/page".into())
+    );
+}
+
+#[test]
+fn resolve_url_query_params() {
+    // Query string only — treated as relative path appended to base directory
+    assert_eq!(
+        resolve_url("https://example.com/search", "?page=2&q=test"),
+        Some("https://example.com/?page=2&q=test".into())
+    );
+}
+
+#[test]
+fn resolve_url_javascript_filtered() {
+    // javascript: URIs are filtered out
+    assert_eq!(resolve_url("https://example.com", "javascript:void(0)"), None);
+    assert_eq!(resolve_url("https://example.com", "javascript:return false;"), None);
+}
+
+#[test]
+fn resolve_url_mailto_filtered() {
+    // mailto: URIs are filtered out
+    assert_eq!(resolve_url("https://example.com", "mailto:user@example.com"), None);
+}
+
+#[test]
+fn resolve_url_tel_filtered() {
+    // tel: URIs are filtered out
+    assert_eq!(resolve_url("https://example.com", "tel:+1234567890"), None);
+}
+
+#[test]
+fn resolve_url_empty_and_hash_only() {
+    // Empty string and bare hash are filtered out
+    assert_eq!(resolve_url("https://example.com", ""), None);
+    assert_eq!(resolve_url("https://example.com", "#"), None);
+    assert_eq!(resolve_url("https://example.com", "  "), None);
+}
+
+#[test]
+fn extract_origin_basic() {
+    // URL with path → origin only
+    assert_eq!(
+        extract_origin("https://example.com/path/page"),
+        Some("https://example.com".into())
+    );
+    assert_eq!(
+        extract_origin("http://myapp.com/login?next=/dashboard"),
+        Some("http://myapp.com".into())
+    );
+}
+
+#[test]
+fn extract_origin_no_path() {
+    // URL without path → returned as-is
+    assert_eq!(
+        extract_origin("https://example.com"),
+        Some("https://example.com".into())
+    );
+    // No scheme → None
+    assert_eq!(extract_origin("example.com"), None);
+}
+
+// ============================================================================
+// AuthConfig + perform_login logic (unit tests, no browser)
+// ============================================================================
+
+#[test]
+fn auth_config_no_credentials_has_none() {
+    let auth = AuthConfig::default();
+    assert!(!auth.has_credentials());
+    assert!(auth.login_url.is_none());
+}
+
+#[test]
+fn auth_config_credentials_mapping() {
+    let mut auth = AuthConfig::default();
+    auth.credentials.insert("Email".into(), "user@test.com".into());
+    auth.credentials.insert("Password".into(), "secret".into());
+    auth.login_url = Some("https://example.com/login".into());
+
+    assert!(auth.has_credentials());
+    assert_eq!(auth.credentials.get("Email"), Some(&"user@test.com".to_string()));
+    assert_eq!(auth.credentials.get("Password"), Some(&"secret".to_string()));
+}
+
+#[test]
+fn auth_config_submit_label_override() {
+    let mut auth = AuthConfig::default();
+    auth.submit_label = Some("Login".into());
+    assert_eq!(auth.submit_label.as_deref(), Some("Login"));
+}
+
+#[test]
+fn auth_config_success_url_check() {
+    let mut auth = AuthConfig::default();
+    auth.success_url_contains = Some("/dashboard".into());
+    assert_eq!(auth.success_url_contains.as_deref(), Some("/dashboard"));
+}
+
+#[test]
+fn auth_config_only_credentials_no_url_is_incomplete() {
+    // has_credentials() = true but login_url is None
+    // perform_login() would return Ok(false) without doing anything
+    let mut auth = AuthConfig::default();
+    auth.credentials.insert("Email".into(), "a@b.com".into());
+    auth.login_url = None;  // No URL set
+
+    // has_credentials is true, but login_url is None → perform_login returns false
+    assert!(auth.has_credentials());
+    assert!(auth.login_url.is_none());
+}
+
+// ============================================================================
+// Phase 14 Step 5: Smart Test Generation with Post-Action Assertions
+// ============================================================================
+
+/// Helper: build a Login-category FormModel with inferred ExpectedOutcome
+fn login_form_model() -> FormModel {
+    FormModel {
+        form_id: "login".into(),
+        purpose: "Authentication".into(),
+        fields: vec![
+            FieldModel { label: "Email".into(), field_type: FieldType::Email, required: true, suggested_test_value: "user@example.com".into() },
+            FieldModel { label: "Password".into(), field_type: FieldType::Password, required: true, suggested_test_value: "TestPass123!".into() },
+        ],
+        submit_label: Some("Sign In".into()),
+        expected_outcome: ExpectedOutcome {
+            url_not_contains: Some("/login".into()),
+            success_text: vec!["welcome".into(), "dashboard".into()],
+            error_indicators: vec!["invalid".into(), "incorrect".into(), "failed".into()],
+            url_contains: None,
+        },
+    }
+}
+
+/// Helper: build a Search-category FormModel with inferred ExpectedOutcome
+fn search_form_model() -> FormModel {
+    FormModel {
+        form_id: "search".into(),
+        purpose: "Search".into(),
+        fields: vec![
+            FieldModel { label: "Query".into(), field_type: FieldType::Text, required: false, suggested_test_value: "test query".into() },
+        ],
+        submit_label: Some("Search".into()),
+        expected_outcome: ExpectedOutcome {
+            success_text: vec!["results".into()],
+            error_indicators: vec!["no results".into()],
+            url_contains: None,
+            url_not_contains: None,
+        },
+    }
+}
+
+/// Helper: build a FormModel with empty ExpectedOutcome (Other category)
+fn other_form_model() -> FormModel {
+    FormModel {
+        form_id: "contact".into(),
+        purpose: "Contact form".into(),
+        fields: vec![
+            FieldModel { label: "Message".into(), field_type: FieldType::Text, required: false, suggested_test_value: "Hello".into() },
+        ],
+        submit_label: Some("Submit".into()),
+        expected_outcome: ExpectedOutcome::default(),
+    }
+}
+
+#[test]
+fn form_test_has_wait_after_submit() {
+    let model = sample_page_model();
+    let form = login_form_model();
+    let spec = generate_form_test("https://example.com/login", &form, &model);
+
+    // First step: FillAndSubmit
+    assert!(matches!(&spec.steps[0], TestStep::FillAndSubmit { .. }),
+        "First step should be FillAndSubmit");
+    // Second step: Wait
+    assert!(
+        matches!(&spec.steps[1], TestStep::Wait { duration_ms } if *duration_ms == 1000),
+        "Second step should be Wait(1000ms), got: {:?}", &spec.steps[1]
+    );
+    assert!(spec.steps.len() >= 2, "Should have at least FillAndSubmit + Wait");
+}
+
+#[test]
+fn form_test_login_has_url_not_contains() {
+    let model = sample_page_model();
+    let form = login_form_model();
+    let spec = generate_form_test("https://example.com/login", &form, &model);
+
+    // Should have an Assert step (3rd step)
+    assert!(spec.steps.len() >= 3, "Login form test should have FillAndSubmit + Wait + Assert");
+
+    let assert_step = spec.steps.iter().find(|s| matches!(s, TestStep::Assert { .. }));
+    assert!(assert_step.is_some(), "Should have an Assert step");
+
+    if let Some(TestStep::Assert { assertions }) = assert_step {
+        let has_url_not_contains = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::UrlNotContains { expected } if expected == "/login")
+        });
+        assert!(
+            has_url_not_contains,
+            "Login form test should have UrlNotContains('/login') assertion, got: {:?}",
+            assertions
+        );
+    }
+}
+
+#[test]
+fn form_test_login_has_error_absent() {
+    let model = sample_page_model();
+    let form = login_form_model();
+    let spec = generate_form_test("https://example.com/login", &form, &model);
+
+    let assert_step = spec.steps.iter().find(|s| matches!(s, TestStep::Assert { .. }));
+    assert!(assert_step.is_some(), "Should have an Assert step");
+
+    if let Some(TestStep::Assert { assertions }) = assert_step {
+        // Should have TextAbsent for "invalid" (first error indicator)
+        let has_invalid_absent = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::TextAbsent { expected } if expected == "invalid")
+        });
+        assert!(
+            has_invalid_absent,
+            "Login form test should have TextAbsent('invalid') assertion, got: {:?}",
+            assertions
+        );
+        // Should also have TextAbsent for "incorrect" and "failed"
+        let absent_count = assertions.iter().filter(|a| matches!(a, AssertionSpec::TextAbsent { .. })).count();
+        assert_eq!(absent_count, 3, "Should have 3 TextAbsent assertions (invalid, incorrect, failed)");
+    }
+}
+
+#[test]
+fn form_test_login_has_success_text() {
+    let model = sample_page_model();
+    let form = login_form_model();
+    let spec = generate_form_test("https://example.com/login", &form, &model);
+
+    let assert_step = spec.steps.iter().find(|s| matches!(s, TestStep::Assert { .. }));
+    assert!(assert_step.is_some(), "Should have an Assert step");
+
+    if let Some(TestStep::Assert { assertions }) = assert_step {
+        // Should have TextPresent for first success indicator ("welcome")
+        let has_welcome = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::TextPresent { expected } if expected == "welcome")
+        });
+        assert!(
+            has_welcome,
+            "Login form test should have TextPresent('welcome') as first success indicator, got: {:?}",
+            assertions
+        );
+        // Should only have ONE TextPresent (first success indicator only)
+        let present_count = assertions.iter().filter(|a| matches!(a, AssertionSpec::TextPresent { .. })).count();
+        assert_eq!(present_count, 1, "Should have exactly 1 TextPresent assertion (first success indicator only)");
+    }
+}
+
+#[test]
+fn form_test_search_has_results() {
+    let model = search_page_model();
+    let form = search_form_model();
+    let spec = generate_form_test("https://example.com/search", &form, &model);
+
+    assert!(spec.steps.len() >= 3, "Search form test should have FillAndSubmit + Wait + Assert");
+
+    let assert_step = spec.steps.iter().find(|s| matches!(s, TestStep::Assert { .. }));
+    assert!(assert_step.is_some(), "Should have an Assert step");
+
+    if let Some(TestStep::Assert { assertions }) = assert_step {
+        let has_results = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::TextPresent { expected } if expected == "results")
+        });
+        assert!(
+            has_results,
+            "Search form test should have TextPresent('results'), got: {:?}",
+            assertions
+        );
+        let has_no_results_absent = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::TextAbsent { expected } if expected == "no results")
+        });
+        assert!(
+            has_no_results_absent,
+            "Search form test should have TextAbsent('no results'), got: {:?}",
+            assertions
+        );
+    }
+}
+
+#[test]
+fn form_test_other_no_assertions() {
+    let model = PageModel {
+        purpose: "Contact page".into(),
+        domain: "".to_string(),
+        forms: vec![other_form_model()],
+        outputs: vec![],
+        suggested_assertions: vec![],
+        navigation_targets: vec![],
+        expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
+    };
+    let form = other_form_model();
+    let spec = generate_form_test("https://example.com/contact", &form, &model);
+
+    // With empty ExpectedOutcome, should only have FillAndSubmit + Wait
+    assert_eq!(spec.steps.len(), 2, "Other category form test should have only FillAndSubmit + Wait, got: {:?}", spec.steps);
+    assert!(matches!(&spec.steps[0], TestStep::FillAndSubmit { .. }));
+    assert!(matches!(&spec.steps[1], TestStep::Wait { .. }));
+}
+
+#[test]
+fn smoke_test_has_url_assertion() {
+    let model = sample_page_model();
+    let spec = generate_smoke_test("https://example.com/login", &model);
+
+    let assert_step = spec.steps.iter().find(|s| matches!(s, TestStep::Assert { .. }));
+    assert!(assert_step.is_some(), "Smoke test should have an Assert step");
+
+    if let Some(TestStep::Assert { assertions }) = assert_step {
+        let has_url_contains = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::UrlContains { expected } if expected == "/login")
+        });
+        assert!(
+            has_url_contains,
+            "Smoke test should have UrlContains('/login') for /login path, got: {:?}",
+            assertions
+        );
+    }
+}
+
+#[test]
+fn smoke_test_has_error_absence() {
+    // Build a page model with page-level error indicators
+    let model = PageModel {
+        purpose: "Login page".into(),
+        domain: "login".to_string(),
+        forms: vec![],
+        outputs: vec![],
+        suggested_assertions: vec![
+            SuggestedAssertion {
+                assertion_type: "text_absent".into(),
+                expected: "error occurred".into(),
+                description: "No error text".into(),
+            },
+        ],
+        navigation_targets: vec![],
+        expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
+    };
+
+    let spec = generate_smoke_test("https://example.com/login", &model);
+
+    let assert_step = spec.steps.iter().find(|s| matches!(s, TestStep::Assert { .. }));
+    assert!(assert_step.is_some(), "Smoke test should have an Assert step");
+
+    if let Some(TestStep::Assert { assertions }) = assert_step {
+        let has_absent = assertions.iter().any(|a| {
+            matches!(a, AssertionSpec::TextAbsent { expected } if expected == "error occurred")
+        });
+        assert!(
+            has_absent,
+            "Smoke test should have TextAbsent from suggested_assertions, got: {:?}",
+            assertions
+        );
+    }
+}
+
+#[test]
+fn url_not_contains_assertion_serde() {
+    // UrlNotContains variant serializes and deserializes correctly via JSON
+    let spec = AssertionSpec::UrlNotContains { expected: "/login".into() };
+    let json = serde_json::to_string(&spec).expect("Failed to serialize UrlNotContains");
+    let parsed: AssertionSpec = serde_json::from_str(&json).expect("Failed to deserialize UrlNotContains");
+
+    assert!(
+        matches!(parsed, AssertionSpec::UrlNotContains { ref expected } if expected == "/login"),
+        "UrlNotContains should roundtrip through JSON, got: {:?}", parsed
+    );
+    // The serde tag value is lowercased snake_case "url_not_contains" (matches the YAML/JSON tag)
+    assert!(json.contains("url_not_contains"), "JSON should include type tag 'url_not_contains', got: {}", json);
+}
+
+#[test]
+fn flow_test_has_post_submit_steps() {
+    // A flow with a FillAndSubmit step maps to FillAndSubmit TestStep (no extra assertions in flow tests currently)
+    let mut values = HashMap::new();
+    values.insert("Email".into(), "user@example.com".into());
+
+    let flows = vec![Flow {
+        name: "Flow: Login -> Dashboard".into(),
+        steps: vec![
+            FlowStep::Navigate { url: "https://example.com/login".into() },
+            FlowStep::FillAndSubmit {
+                url: "https://example.com/login".into(),
+                form_id: "login".into(),
+                values,
+                submit_label: Some("Sign In".into()),
+            },
+        ],
+    }];
+
+    let specs = generate_flow_tests(&flows);
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0].name, "Flow: Login -> Dashboard");
+    // Should have at least Navigate + FillAndSubmit
+    assert!(specs[0].steps.len() >= 2, "Flow test should have at least 2 steps");
+    assert!(matches!(&specs[0].steps[0], TestStep::Navigate { url } if url == "https://example.com/login"));
+    assert!(matches!(&specs[0].steps[1], TestStep::FillAndSubmit { .. }));
+}
+
+// ============================================================================
+// Phase 14 Step 6: Value Overrides + Exclusion Filtering
+// ============================================================================
+
+#[test]
+fn exclusion_skips_url_in_generate_plan() {
+    // ExclusionConfig with skip_urls filters URLs from generate_test_plan indirectly
+    // (actual BFS skipping is tested in integration; here we test ValueConfig/ExclusionConfig APIs)
+    use screen_detection::cli::config::ExclusionConfig;
+
+    let mut excl = ExclusionConfig::default();
+    excl.skip_urls.push("/logout".into());
+    excl.skip_urls.push("/admin".into());
+
+    assert!(excl.should_skip("https://example.com/logout"), "Should skip /logout URL");
+    assert!(excl.should_skip("https://example.com/admin/users"), "Should skip /admin URL");
+    assert!(!excl.should_skip("https://example.com/dashboard"), "Should not skip /dashboard");
+    assert!(!excl.should_skip("https://example.com/"), "Should not skip root");
+}
+
+#[test]
+fn exclusion_empty_skips_nothing() {
+    use screen_detection::cli::config::ExclusionConfig;
+
+    let excl = ExclusionConfig::default();
+    assert!(!excl.should_skip("https://example.com/logout"));
+    assert!(!excl.should_skip("https://example.com/admin"));
+    assert!(!excl.should_skip("https://example.com/"));
+}
+
+#[test]
+fn include_urls_in_exclusion_config() {
+    use screen_detection::cli::config::ExclusionConfig;
+
+    let mut excl = ExclusionConfig::default();
+    excl.include_urls.push("https://example.com/settings".into());
+    excl.include_urls.push("https://example.com/profile".into());
+
+    assert_eq!(excl.include_urls.len(), 2);
+    assert!(excl.include_urls.contains(&"https://example.com/settings".to_string()));
+    assert!(excl.include_urls.contains(&"https://example.com/profile".to_string()));
+    // include_urls doesn't affect should_skip
+    assert!(!excl.should_skip("https://example.com/settings"));
+}
+
+#[test]
+fn value_override_replaces_suggested_value() {
+    use screen_detection::cli::config::ValueConfig;
+
+    let mut vc = ValueConfig::default();
+    vc.fields.insert("Email".into(), "override@test.com".into());
+
+    let model = sample_page_model(); // Login page
+    let form = login_form_model();   // has Email + Password fields
+
+    let spec = generate_test_plan_with_overrides_helper(&model, &form, Some(&vc));
+
+    // The FillAndSubmit step should have our overridden Email value
+    if let Some(TestStep::FillAndSubmit { values, .. }) = spec.steps.first() {
+        assert_eq!(
+            values.get("Email").map(|s| s.as_str()),
+            Some("override@test.com"),
+            "ValueConfig override should replace suggested value for Email"
+        );
+    } else {
+        panic!("First step should be FillAndSubmit");
+    }
+}
+
+#[test]
+fn value_override_fallback_to_default() {
+    use screen_detection::cli::config::ValueConfig;
+
+    let vc = ValueConfig::default(); // No overrides
+    let model = sample_page_model();
+    let form = login_form_model();
+
+    let spec = generate_test_plan_with_overrides_helper(&model, &form, Some(&vc));
+
+    // Without override, should use suggested test value from FieldModel
+    if let Some(TestStep::FillAndSubmit { values, .. }) = spec.steps.first() {
+        assert_eq!(
+            values.get("Email").map(|s| s.as_str()),
+            Some("user@example.com"), // from login_form_model().fields[0].suggested_test_value
+            "Without override, should fall back to suggested test value"
+        );
+    } else {
+        panic!("First step should be FillAndSubmit");
+    }
+}
+
+#[test]
+fn value_override_category_priority() {
+    use screen_detection::cli::config::ValueConfig;
+
+    let mut vc = ValueConfig::default();
+    // Global override
+    vc.fields.insert("Email".into(), "global@test.com".into());
+    // Category-scoped override for Login
+    let mut cat_map = HashMap::new();
+    cat_map.insert("Email".into(), "login-specific@test.com".into());
+    vc.categories.insert("Login".into(), cat_map);
+
+    let model = sample_page_model(); // category = Login
+    let form = login_form_model();
+
+    let spec = generate_test_plan_with_overrides_helper(&model, &form, Some(&vc));
+
+    if let Some(TestStep::FillAndSubmit { values, .. }) = spec.steps.first() {
+        // Category-scoped should take priority over global
+        let email = values.get("Email").map(|s| s.as_str());
+        assert_eq!(
+            email,
+            Some("login-specific@test.com"),
+            "Category-scoped override should take priority over global, got: {:?}",
+            email
+        );
+    } else {
+        panic!("First step should be FillAndSubmit");
+    }
+}
+
+/// Helper: generate a form test spec using generate_test_plan() with overrides
+fn generate_test_plan_with_overrides_helper(
+    model: &PageModel,
+    form: &FormModel,
+    value_overrides: Option<&screen_detection::cli::config::ValueConfig>,
+) -> screen_detection::spec::spec_model::TestSpec {
+    let mut map = AppMap::new();
+    map.add_page(PageNode {
+        url: "https://example.com/login".into(),
+        title: "Login".into(),
+        depth: 0,
+        page_model: PageModel {
+            purpose: model.purpose.clone(),
+            domain: model.domain.clone(),
+            forms: vec![form.clone()],
+            outputs: vec![],
+            suggested_assertions: vec![],
+            navigation_targets: vec![],
+            expected_outcome: ExpectedOutcome::default(),
+            layout_description: None,
+            field_analyses: vec![],
+            suggested_test_scenarios: vec![],
+        },
+    });
+    let specs = generate_test_plan(&map, value_overrides, None);
+    // Find the form test spec (starts with "Form:")
+    specs.into_iter().find(|s| s.name.starts_with("Form:"))
+        .expect("Should have a Form: test spec")
 }

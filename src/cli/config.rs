@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +114,152 @@ pub enum Commands {
 // Config File Model (optional YAML)
 // ============================================================================
 
+// ============================================================================
+// Auth, Value, and Exclusion config structs
+// ============================================================================
+
+/// Authentication configuration for protected web apps.
+///
+/// Provides credentials for logging in before exploration begins.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuthConfig {
+    /// URL of the login page (required if credentials are set)
+    #[serde(default)]
+    pub login_url: Option<String>,
+
+    /// Field label → credential value mapping
+    /// e.g. `"Email": "admin@staging.com"`, `"Password": "StagingPass!"`
+    #[serde(default)]
+    pub credentials: HashMap<String, String>,
+
+    /// Submit button label (auto-detected from form if not set)
+    #[serde(default)]
+    pub submit_label: Option<String>,
+
+    /// URL substring expected to be present after successful login
+    /// e.g. `"/dashboard"` to verify the user landed on the right page
+    #[serde(default)]
+    pub success_url_contains: Option<String>,
+
+    /// Text expected to appear on the page after successful login
+    #[serde(default)]
+    pub success_text: Option<String>,
+}
+
+impl AuthConfig {
+    /// Returns true if credentials are configured (non-empty map).
+    pub fn has_credentials(&self) -> bool {
+        !self.credentials.is_empty()
+    }
+}
+
+/// Custom field value overrides for form filling.
+///
+/// Allows specifying exact values for specific form fields, either globally
+/// or scoped to a particular application domain (free-form string).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ValueConfig {
+    /// Global label → value overrides (case-insensitive label matching)
+    #[serde(default)]
+    pub fields: HashMap<String, String>,
+
+    /// Domain-scoped overrides: free-form domain string → {label → value}
+    /// e.g. `"telecom SIM provisioning": {"MSISDN": "447700123456"}`
+    /// The domain key is matched case-insensitively as a substring of the page domain.
+    #[serde(default)]
+    pub domains: HashMap<String, HashMap<String, String>>,
+
+    /// Legacy: category-scoped overrides (backward compat with old YAML config files).
+    /// e.g. `"Checkout": {"Card Number": "4000056655665556"}`
+    /// Checked after `domains` if no domain match is found.
+    #[serde(default)]
+    pub categories: HashMap<String, HashMap<String, String>>,
+}
+
+impl ValueConfig {
+    /// Resolve the value to use for a field.
+    ///
+    /// Priority order:
+    /// 1. Domain-scoped overrides (substring match on `domain`)
+    /// 2. Category-scoped overrides (legacy, exact match on `domain` as category name)
+    /// 3. Global fields
+    ///
+    /// Label matching is case-insensitive in all cases.
+    /// Returns `None` if no override is configured.
+    pub fn resolve(&self, label: &str, domain: Option<&str>) -> Option<&String> {
+        let label_lower = label.to_lowercase();
+
+        // Domain-scoped lookup first (new: substring match)
+        if let Some(dom) = domain {
+            let dom_lower = dom.to_lowercase();
+
+            // Check domains map — key is matched as substring of page domain
+            if let Some(dom_map) = self
+                .domains
+                .iter()
+                .find(|(k, _)| dom_lower.contains(&k.to_lowercase()))
+                .map(|(_, v)| v)
+            {
+                if let Some(v) = dom_map
+                    .iter()
+                    .find(|(k, _)| k.to_lowercase() == label_lower)
+                    .map(|(_, v)| v)
+                {
+                    return Some(v);
+                }
+            }
+
+            // Legacy: check categories map (exact case-insensitive match)
+            if let Some(cat_map) = self
+                .categories
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == dom_lower)
+                .map(|(_, v)| v)
+            {
+                if let Some(v) = cat_map
+                    .iter()
+                    .find(|(k, _)| k.to_lowercase() == label_lower)
+                    .map(|(_, v)| v)
+                {
+                    return Some(v);
+                }
+            }
+        }
+
+        // Fall back to global fields
+        self.fields
+            .iter()
+            .find(|(k, _)| k.to_lowercase() == label_lower)
+            .map(|(_, v)| v)
+    }
+}
+
+/// URL pattern exclusion / forced-inclusion config.
+///
+/// Controls which URLs the explorer visits during BFS crawling.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExclusionConfig {
+    /// URL substrings to skip (e.g. `"/logout"`, `"/admin"`)
+    #[serde(default)]
+    pub skip_urls: Vec<String>,
+
+    /// Extra URLs to forcibly seed into the BFS queue,
+    /// even if not auto-discovered via navigation targets.
+    #[serde(default)]
+    pub include_urls: Vec<String>,
+}
+
+impl ExclusionConfig {
+    /// Returns true if the given URL should be skipped (matches any skip pattern).
+    pub fn should_skip(&self, url: &str) -> bool {
+        self.skip_urls.iter().any(|pattern| url.contains(pattern.as_str()))
+    }
+}
+
+// ============================================================================
+// AppConfig
+// ============================================================================
+
 /// Optional YAML config file: `screen-detection.yaml`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -121,6 +269,15 @@ pub struct AppConfig {
     pub run: RunConfig,
     #[serde(default)]
     pub ollama: OllamaConfig,
+    /// Login credentials and success verification for authenticated apps.
+    #[serde(default)]
+    pub auth: AuthConfig,
+    /// Custom form field value overrides.
+    #[serde(default)]
+    pub values: ValueConfig,
+    /// URL skip patterns and force-include URLs.
+    #[serde(default)]
+    pub exclusions: ExclusionConfig,
 }
 
 impl Default for AppConfig {
@@ -129,6 +286,9 @@ impl Default for AppConfig {
             explore: ExploreConfig::default(),
             run: RunConfig::default(),
             ollama: OllamaConfig::default(),
+            auth: AuthConfig::default(),
+            values: ValueConfig::default(),
+            exclusions: ExclusionConfig::default(),
         }
     }
 }

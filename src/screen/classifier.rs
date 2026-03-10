@@ -152,11 +152,13 @@ fn is_output(el: &DomElement) -> bool {
 }
 
 fn label_for(el: &DomElement) -> Option<String> {
-    el.aria_label
+    el.associated_label_text
         .clone()
+        .or_else(|| el.aria_label.clone())
         .or_else(|| el.text.clone())
         .or_else(|| el.placeholder.clone())
         .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn to_input(el: &DomElement) -> ScreenElement {
@@ -176,6 +178,11 @@ fn to_input(el: &DomElement) -> ScreenElement {
         maxlength: el.maxlength,
         minlength: el.minlength,
         readonly: el.readonly,
+        fieldset_legend: el.fieldset_legend.clone(),
+        section_heading: el.section_heading.clone(),
+        nearby_help_text: el.nearby_help_text.clone(),
+        autocomplete: el.autocomplete.clone(),
+        aria_describedby_text: el.aria_describedby_text.clone(),
     }
 }
 
@@ -196,6 +203,11 @@ fn to_action(el: &DomElement) -> ScreenElement {
         maxlength: None,
         minlength: None,
         readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
     }
 }
 
@@ -216,5 +228,10 @@ fn to_output(el: &DomElement) -> ScreenElement {
         maxlength: None,
         minlength: None,
         readonly: false,
+        fieldset_legend: None,
+        section_heading: None,
+        nearby_help_text: None,
+        autocomplete: None,
+        aria_describedby_text: None,
     }
 }

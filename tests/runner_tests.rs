@@ -386,3 +386,59 @@ fn run_config_yaml_roundtrip() {
     assert!(!restored.screenshot_on_failure);
     assert_eq!(restored.screenshot_dir, "ci/screenshots");
 }
+
+// ============================================================================
+// Phase 14 Step 5: console/HTML/JUnit output for UrlNotContains assertion
+// ============================================================================
+
+#[test]
+fn url_not_contains_in_report() {
+    // A failed UrlNotContains assertion result
+    let failed_result = TestResult {
+        spec_name: "Form: Login test".to_string(),
+        passed: false,
+        steps_run: 2,
+        assertion_results: vec![AssertionResult {
+            step_index: 1,
+            spec: AssertionSpec::UrlNotContains { expected: "/login".into() },
+            passed: false,
+            actual: Some("https://example.com/login".into()),
+            message: Some("URL should not contain '/login' but does".into()),
+        }],
+        error: None,
+        duration_ms: None,
+        screenshots: vec![],
+        retry_attempts: 0,
+    };
+
+    let report = single_result_report(failed_result);
+
+    // Console report should name the assertion correctly
+    let console = format_console_report(&report);
+    assert!(
+        console.contains("UrlNotContains"),
+        "Console report should display 'UrlNotContains' for failed assertion, got:\n{}",
+        console
+    );
+    assert!(
+        console.contains("[FAIL]"),
+        "Console report should show [FAIL] for failed UrlNotContains, got:\n{}",
+        console
+    );
+
+    // HTML report should contain the failure message text
+    let html = generate_html_report(&report);
+    assert!(
+        html.contains("should not contain"),
+        "HTML report should contain the UrlNotContains failure message, got length: {}",
+        html.len()
+    );
+
+    // JUnit report should have a failure element
+    let xml = generate_junit_xml(&report);
+    assert!(
+        xml.contains("<failure"),
+        "JUnit XML should have <failure element for failed test, got:\n{}",
+        xml
+    );
+}

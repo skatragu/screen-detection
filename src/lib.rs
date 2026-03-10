@@ -11,7 +11,7 @@ use crate::{
         canonical_model::{canonicalize, CanonicalScreenState},
         diff::semantic_diff,
     },
-    screen::{classifier::classify, screen_model::DomElement},
+    screen::{classifier::classify, screen_model::{DomElement, StructuralOutline}},
     state::{diff::diff, state_builder::build_state},
     trace::logger::TraceLogger,
 };
@@ -120,8 +120,13 @@ pub fn snapshot_session(
     let url_str = raw["url"].as_str().unwrap_or("unknown");
     let title_str = raw["title"].as_str().unwrap_or("");
 
+    let structural_outline: StructuralOutline = raw.get("structural_outline")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
     let semantics = classify(&elements);
-    let screen_state = build_state(Some(url_str), title_str, semantics);
+    let mut screen_state = build_state(Some(url_str), title_str, semantics);
+    screen_state.structural_outline = structural_outline;
     let identity_diff = diff(&screen_state, &screen_state);
     let canonical = canonicalize(&screen_state, Some(&identity_diff));
 

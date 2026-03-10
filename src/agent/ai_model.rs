@@ -2,7 +2,6 @@ use crate::{
     agent::agent_model::{
         AgentAction, AgentMemory, DecisionType, MIN_CONFIDENCE, ModelDecision, Policy,
     },
-    agent::page_model::PageCategory,
     canonical::diff::SemanticSignal,
     canonical::diff::SemanticStateDiff,
     screen::screen_model::Form,
@@ -36,55 +35,17 @@ pub trait ModelBackend {
 
 pub struct DeterministicPolicy;
 
-/// Derive a sensible fill value from the input's label, type, and page category.
+/// Derive a sensible fill value from the input's label and type.
 ///
-/// When a `PageCategory` is provided, category-specific values are checked first
-/// (e.g., Login pages get "existing user" credentials, Registration pages get
-/// "new user" values). Falls through to generic label-based patterns if no
-/// category match is found.
+/// Uses ~26 label-based heuristics to produce a realistic test value.
+/// Domain-context-aware values (e.g. telecom-specific MSISDN formats) are
+/// provided by the LLM FieldAnalysis in the intelligence pipeline — this
+/// function is the final deterministic fallback that always produces a value.
 ///
 /// Pattern ordering: specific before general (e.g., "card number" before "number",
 /// "first name" before "name", "confirm password" before "password").
-pub fn guess_value(label: &str, input_type: Option<&str>, category: Option<&PageCategory>) -> String {
+pub fn guess_value(label: &str, input_type: Option<&str>) -> String {
     let l = label.to_lowercase();
-
-    // Category-specific overrides (checked first)
-    if let Some(cat) = category {
-        match cat {
-            PageCategory::Login => {
-                if l.contains("email") || l.contains("username") || l.contains("user") {
-                    return "testuser@example.com".into();
-                }
-                if l.contains("password") { return "TestPass123!".into(); }
-            }
-            PageCategory::Registration => {
-                if l.contains("confirm") && l.contains("password") { return "NewPass456!".into(); }
-                if l.contains("email") { return "newuser_test@example.com".into(); }
-                if l.contains("password") { return "NewPass456!".into(); }
-                if l.contains("username") || l.contains("user") { return "new_testuser".into(); }
-            }
-            PageCategory::Search => {
-                if l.contains("search") || l.contains("query") || l.contains("keyword") {
-                    return "test search query".into();
-                }
-            }
-            PageCategory::Checkout => {
-                if l.contains("card") && l.contains("number") { return "4111111111111111".into(); }
-                if l.contains("cvv") || l.contains("cvc") { return "123".into(); }
-                if l.contains("expir") { return "12/2028".into(); }
-                if l.contains("name") { return "Jane Doe".into(); }
-                if l.contains("address") || l.contains("street") { return "123 Main St".into(); }
-                if l.contains("city") { return "New York".into(); }
-                if l.contains("state") { return "NY".into(); }
-                if l.contains("zip") || l.contains("postal") { return "10001".into(); }
-            }
-            PageCategory::Settings => {
-                if l.contains("email") { return "updated@example.com".into(); }
-                if l.contains("name") { return "Jane Updated".into(); }
-            }
-            _ => {} // Fall through to generic patterns
-        }
-    }
 
     // Label-based heuristics (checked in order — specific before general)
     if l.contains("email") {
@@ -199,11 +160,10 @@ pub fn guess_value(label: &str, input_type: Option<&str>, category: Option<&Page
 pub fn constrained_value(
     label: &str,
     input_type: Option<&str>,
-    category: Option<&PageCategory>,
     maxlength: Option<u32>,
     minlength: Option<u32>,
 ) -> String {
-    let mut value = guess_value(label, input_type, category);
+    let mut value = guess_value(label, input_type);
 
     // Respect maxlength
     if let Some(max) = maxlength {
@@ -266,49 +226,6 @@ pub fn select_best_form(forms: &[Form]) -> Option<&Form> {
         })
 }
 
-/// Infer page category from screen state.
-///
-/// Simplified version of `classify_page_category` from `page_analyzer.rs`
-/// that can be used directly in `DeterministicPolicy::decide()` without
-/// creating a circular import.
-pub fn infer_page_category(screen: &ScreenState) -> PageCategory {
-    // Check form intents first
-    for form in &screen.forms {
-        if let Some(intent) = &form.intent {
-            let label = intent.label.to_lowercase();
-            if label.contains("auth") || label.contains("login") || label.contains("sign in") {
-                return PageCategory::Login;
-            }
-            if label.contains("register") || label.contains("sign up") || label.contains("create account") {
-                return PageCategory::Registration;
-            }
-            if label.contains("search") {
-                return PageCategory::Search;
-            }
-        }
-    }
-
-    // Fall back to title-based classification
-    let title = screen.title.to_lowercase();
-    if title.contains("login") || title.contains("sign in") {
-        PageCategory::Login
-    } else if title.contains("register") || title.contains("sign up") {
-        PageCategory::Registration
-    } else if title.contains("search") {
-        PageCategory::Search
-    } else if title.contains("dashboard") {
-        PageCategory::Dashboard
-    } else if title.contains("settings") || title.contains("preferences") {
-        PageCategory::Settings
-    } else if title.contains("checkout") || title.contains("payment") {
-        PageCategory::Checkout
-    } else if title.contains("error") || title.contains("404") || title.contains("not found") {
-        PageCategory::Error
-    } else {
-        PageCategory::Other
-    }
-}
-
 impl Policy for DeterministicPolicy {
     fn decide(
         &self,
@@ -322,15 +239,12 @@ impl Policy for DeterministicPolicy {
             SemanticSignal::ScreenLoaded => {
                 let form = select_best_form(&screen.forms)?;
 
-                // Compute page category for context-aware value filling
-                let category = infer_page_category(screen);
-
                 let values: Vec<(String, String)> = form
                     .inputs
                     .iter()
                     .map(|input| {
                         let label = input.label.clone().unwrap_or_default();
-                        let value = guess_value(&label, input.input_type.as_deref(), Some(&category));
+                        let value = guess_value(&label, input.input_type.as_deref());
                         (label, value)
                     })
                     .collect();
